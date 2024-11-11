@@ -1,0 +1,344 @@
+---
+title: "1_Spore trap data analysis - METHODS"
+author: "Jill Check"
+date: "2024-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load packages}
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(corrplot)
+library(zoo)
+library(ggpubr)
+library(rstatix)
+library(lubridate)
+library(patchwork)
+#trace(ggpubr:::.stat_lm, edit = TRUE)
+
+```
+
+# METHODS TESTING FIGURES
+
+## Lysis method testing
+
+```{r Lysis methods}
+
+# Read in data and select columns
+
+Lysis <- read.csv('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Methods testing/Testing data/Spore lysis testing/Lysis testing summary.csv') %>%
+  
+  subset(Content != 'Std') %>%
+  
+  subset(Content != 'Neg Ctrl') %>%
+  
+  select('X', 'Cq', 'Fluor')
+
+Lysis$Cq <- as.numeric(Lysis$Cq)
+
+
+# Plotting Cq by Fluorophore and by Lysis Method
+
+Lysis_plot <- ggplot(data = Lysis, aes(x = X, y = Cq)) +
+  
+  geom_boxplot() +
+  
+  theme_classic2() +
+  
+  theme(axis.text.x = element_text(angle =45, vjust = 0.95, hjust = 1),
+        
+        axis.text = element_text(size = 8)) +
+  
+  facet_grid(~Fluor) +
+  
+  xlab('Lysis method')
+
+Lysis_plot
+
+```
+
+
+## DNA extraction method testing
+
+```{r DNA extraction method}
+
+# Read in data and select columns
+
+DNA <- read.csv('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Methods testing/Testing data/DNA extraction kit testing/JCC 1-25-2024 DNA extraction testing.csv') %>%
+  
+  subset(Content != 'Std') %>%
+  
+  subset(Content != 'Neg Ctrl') %>%
+  
+  subset(Fluor == 'FAM') %>%
+  
+  select('Sample', 'Cq')
+
+
+# Plotting Cq by extraction method
+
+DNA_plot <- ggplot(data = DNA, aes(x = Sample, y = Cq)) +
+  
+  geom_boxplot() +
+  
+  theme_classic2() +
+  
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.95, hjust = 1),
+        
+        axis.text = element_text(size = 8)) +
+  
+  xlab('DNA Extraction Method')
+
+DNA_plot
+
+```
+## Final DNA extraction method figure
+
+```{r Methods combo plot}
+
+# Combine lysis method and DNA extraction method plots
+
+Methods <- Lysis_plot + DNA_plot +
+  
+  plot_layout(guides = "collect") &
+  
+  theme(legend.box.background = element_rect(color = "black", size = 1))
+
+Methods
+
+
+# Write out
+
+ggsave(filename = 'Methods testing.jpg', device = 'jpg', plot = Methods, 
+       
+       path = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures', 
+       
+       unit = 'mm', width = 178, height = 123)
+```
+
+## HHIC testing
+
+```{r HHIC}
+
+# Load in data for HHIC validation:
+
+HHIC <- read.csv('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Methods testing/Testing data/HHIC testing/HHICtest_final.csv') %>%
+  
+  subset(Fluor == 'FAM') %>%
+  
+  subset(!Content == 'Neg Ctrl')
+
+HHIC$Cq <- as.numeric(HHIC$Cq)
+
+HHIC <- HHIC %>%
+  
+  group_by(Group, X) %>%
+  
+  summarise(FAMCq_mean = mean(Cq),
+            
+            FAMCq_sd = sd(Cq),
+            
+            HEXCq_mean = mean(Cq),
+            
+            HEXCq_sd = sd(Cq))
+
+
+# Plotting by mastermix and targets 
+
+HHIC_plot <- ggplot(data = HHIC, aes(x = X, y = FAMCq_mean), add = "reg.line") +
+  
+  geom_point() +
+  
+  geom_smooth(method=lm, se=FALSE, color='black') +
+  
+  geom_errorbar(aes(ymin=FAMCq_mean-FAMCq_sd, ymax=FAMCq_mean+FAMCq_sd), position = position_dodge(0.05)) +
+  
+  stat_regline_equation(label.x = 4, label.y = 37.5) +
+  
+  stat_cor(aes(label = paste(after_stat(rr.label))), label.x = 4, label.y = 40, r.digits=4) +
+  
+  scale_x_continuous(name = "Log10(ng DNA)", breaks = c(1,2,3,4,5,6,7,8,9)) +
+  
+  scale_y_continuous(name = "Ct", limits = c(10, 40), n.breaks = 7) +
+  
+  theme_classic2() +
+  
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        
+        axis.text = element_text(size = 8),
+        
+        axis.title = element_text(size = 10)) +
+  
+  facet_grid(~Group)
+
+HHIC_plot
+
+
+# Write out
+
+ggsave(filename = 'HHIC testing.jpg', device = 'jpg', plot = HHIC_plot, 
+       
+       path = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures', 
+       
+       unit = 'mm', width = 178, height = 123)
+
+```
+
+# STANDARD CURVES
+
+```{r Standard curves}
+
+# Exclude half steps and below LOD
+
+excluded_values = c(10, 500, 5000)
+
+
+# Load in 
+
+SC <- read_excel('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/qPCR data/Standard_curve.xlsx') %>%
+  
+  group_by(Type, Value) %>%
+  
+  summarise(FAMCq_mean = mean(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE),
+            
+            FAMCq_sd = sd(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE),
+            
+            HEXCq_mean = mean(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE),
+            
+            HEXCq_sd = sd(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>%
+  
+  filter(!Value  %in% excluded_values)
+
+
+# Plotting 
+
+stdcurve_plot <- ggplot(data = SC, aes(x = log10(Value), y = FAMCq_mean), add = "reg.line") +
+  
+  geom_point() +
+  
+  geom_smooth(method=lm, se=FALSE, color='black') +
+  
+  geom_errorbar(aes(ymin=FAMCq_mean-FAMCq_sd, ymax=FAMCq_mean+FAMCq_sd), position = position_dodge(0.05)) +
+  
+  stat_regline_equation(label.x = 2.5, label.y = 21.5) +
+  
+  stat_cor(aes(label = paste(after_stat(rr.label))), label.x = 2.5, label.y = 24.5, r.digits=4) +
+  
+  scale_x_continuous(name = "Log10(# spores)", breaks = c(1,2,3,4)) +
+  
+  scale_y_continuous(name = "Ct", limits = c(20, 40), n.breaks = 7) +
+  
+  theme_classic2() +
+  
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  
+  facet_grid(~Type)
+
+stdcurve_plot
+
+
+# Write out 
+
+ggsave(filename = 'Standard curve.jpg', device = 'jpg', plot = stdcurve_plot, 
+       
+       path = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures', 
+       
+       unit = 'mm', width = 178, height = 123)
+
+```
+
+# CORRELATION BETWEEN SPORE TRAP TYPES
+
+```{r Correlation}
+
+# Load in Rotorod data and transform Cqs into spore quantity
+
+Rotorod <- read_excel('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/qPCR data/Sample_log.xlsx', sheet = 'Rotorod') %>%
+  
+  rowwise() %>%
+  
+  mutate(FAMCq = mean(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(FAMCq_sd = sd(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(HEXCq = mean(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>% 
+  
+  mutate(HEXCq_sd = sd(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(Quant = 10^((FAMCq-44.764)/-4.2249)/1000) %>%
+  
+  mutate(Log_Quant = log10(Quant+1)) %>%
+  
+  select(-c('FAM_Cq1', 'FAM_Cq2', 'HEX_Cq1', 'HEX_Cq2', 'Notes'))
+
+
+# Load in Burkard data and transform Cqs into spore quantity
+
+Burkard <- read_excel('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/qPCR data/Sample_log.xlsx', sheet = 'Burkard') %>%
+  
+  rowwise() %>%
+  
+  mutate(across(starts_with("FAM_"), as.double)) %>%
+  
+  mutate(across(starts_with("HEX_"), as.double)) %>%
+  
+  mutate(FAMCq = mean(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(FAMCq_sd = sd(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(HEXCq = mean(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>% 
+  
+  mutate(HEXCq_sd = sd(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(Quant = 10^((FAMCq-43.099)/-3.884)/1000) %>%
+  
+  mutate(Log_Quant = log10(Quant+1)) %>%
+  
+  select(-c('FAM_Cq1', 'FAM_Cq2', 'HEX_Cq1', 'HEX_Cq2', 'Notes'))
+
+
+# Create new data set with Rotorod and Burkard data to calculate and plot correlation
+
+corr_Rotorod <- Rotorod %>% ungroup() %>% select('Location', 'Type', 'Date', 'Quant')
+
+corr_Burkard <- Burkard %>% ungroup() %>% select('Location', 'Type', 'Date', 'Quant')
+
+spore <- left_join(x = corr_Rotorod, y = corr_Burkard, by = c('Location', 'Date')) %>%
+  na.omit()
+
+
+# Plotting
+
+spore_corr <- ggscatter(data = spore, x='Quant.x', y='Quant.y', add = 'reg.line') +
+  
+  stat_cor(label.x = 0, label.y = 7.25, size = 3) +
+  
+  stat_regline_equation(label.x = 0, label.y = 8, size = 3) +
+  
+  ylab('Burkard spore quantity') +
+  
+  xlab('Rotating arm air sampler spore quantity') +
+  
+  theme(axis.title = element_text(size = 10),
+  
+              axis.text = element_text(size = 8))
+
+spore_corr
+
+
+# Write out 
+
+ggsave(filename = 'Spore trap correlation.jpg', device = 'jpg', plot = spore_corr, 
+       
+       path = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures', 
+       
+       unit = 'mm', width = 85, height = 85)
+
+```

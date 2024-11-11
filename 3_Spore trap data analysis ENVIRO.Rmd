@@ -1,0 +1,1115 @@
+---
+title: "3_Spore trap data analysis ENVIRO"
+author: "Jill Check"
+date: "2024-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load packages}
+
+library(readxl)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(zoo)
+library(ggpubr)
+library(rstatix)
+library(lubridate)
+library(patchwork)
+library(Hmisc)
+library(ggcorrplot)
+library(corrplot)
+library(purrr)
+library(png)
+#trace(ggpubr:::.stat_lm, edit = TRUE)
+
+```
+
+# ENVIRONMENTAL DATA LOAD IN
+
+### Data load in and tidying
+
+```{r Rotorod data}
+
+# Read in Rotorod data and transform Cqs into spore quantity
+
+Rotorod <- read_excel('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/qPCR data/Sample_log.xlsx', sheet = 'Rotorod') %>%
+  
+  rowwise() %>%
+  
+  mutate(FAMCq = mean(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(FAMCq_sd = sd(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(HEXCq = mean(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>% 
+  
+  mutate(HEXCq_sd = sd(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(Quant = 10^((FAMCq-44.764)/-4.2249)/1000) %>%
+  
+  mutate(Log_Quant = log10(Quant+1)) %>%
+  
+  select(-c('FAM_Cq1', 'FAM_Cq2', 'HEX_Cq1', 'HEX_Cq2', 'Notes'))
+
+Rotorod$Date <- format(as.Date(Rotorod$Date, format = '%Y-%m-%d'), '%m-%d-%Y')
+
+Rotorod$Date <- as.Date(Rotorod$Date, format = '%m-%d-%Y')
+
+Rotorod <- Rotorod %>% mutate_if(is.numeric, ~replace(., is.na(.), 0))
+
+```
+
+```{r Burkard data}
+
+# Read in Burkard data and transform Cqs into spore quantity
+
+Burkard <- read_excel('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/qPCR data/Sample_log.xlsx', sheet = 'Burkard') %>%
+  
+  rowwise() %>%
+  
+  mutate(across(starts_with("FAM_"), as.double)) %>%
+  
+  mutate(across(starts_with("HEX_"), as.double)) %>%
+  
+  mutate(FAMCq = mean(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(FAMCq_sd = sd(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(HEXCq = mean(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>% 
+  
+  mutate(HEXCq_sd = sd(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(Quant = 10^((FAMCq-43.099)/-3.884)/1000) %>%
+  
+  mutate(Log_Quant = log10(Quant+1)) %>%
+  
+  select(-c('FAM_Cq1', 'FAM_Cq2', 'HEX_Cq1', 'HEX_Cq2', 'Notes'))
+
+Burkard$Date <- format(as.Date(Burkard$Date, format = '%Y-%m-%d'), '%m-%d-%Y')
+
+Burkard$Date <- as.Date(Burkard$Date, format = '%m-%d-%Y')
+
+Burkard <- Burkard %>% mutate_if(is.numeric, ~replace(., is.na(.), 0))
+
+```
+
+```{r Weather data}
+
+# Read in Weather data 
+
+Weather <- read.csv(file='/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Data/Weather data/Summarized.csv') %>%
+  
+  select(!X) %>%
+  
+  mutate(Year = year(Date), .after = Location)
+
+Weather$Date <- as.Date(Weather$Date, format = '%Y - %m - %d')
+
+```
+
+
+```{r MA calcs}
+
+# Functions for each MA window
+
+MA_1 = function(x) 
+  
+  rollmean(x, k = 1, fill = NA, align = "right")
+
+MA_2 = function(x) 
+  
+  rollmean(x, k = 2, fill = NA, align = "right")
+
+MA_3 = function(x) 
+  
+  rollmean(x, k = 3, fill = NA, align = "right")
+
+MA_4 = function(x) 
+  
+  rollmean(x, k = 4, fill = NA, align = "right")
+
+MA_5 = function(x) 
+  
+  rollmean(x, k = 5, fill = NA, align = "right")
+
+MA_6 = function(x) 
+  
+  rollmean(x, k = 6, fill = NA, align = "right")
+
+MA_7 = function(x) 
+  
+  rollmean(x, k = 7, fill = NA, align = "right")
+
+
+# Changing column names for better figure output:
+
+colnames(Weather) <- c('Date', 'Location', 'Year', 
+                       
+                       'MaxTemp', 'MinTemp', 'MeanTemp', 
+                       
+                       'MaxHum', 'MinHum', 'MeanHum', 
+                       
+                       'MaxWS', 'MinWS', 'MeanWS', 
+                       
+                       'MaxPcp', 'Pcp', 
+                       
+                       'Hum70', 'Hum80', 'Hum90', 
+                       
+                       'WebsterTempDur', 'HockTempDur', 
+                       
+                       'WetNight', 
+                       
+                       'HockPeak1', 'HockPeak2')
+
+vars <- names(Weather[4:length(colnames(Weather))])
+
+
+# Transform raw weather data into MAs
+
+MA <- 
+  
+  Weather %>% 
+  
+  group_by(Location, Year) %>% 
+  
+  mutate(across(c(vars), MA_1, .names='MA1_{.col}')) %>%
+  
+  mutate(across(c(vars), MA_2, .names='MA2_{.col}')) %>%
+  
+  mutate(across(c(vars), MA_3, .names='MA3_{.col}')) %>%
+  
+  mutate(across(c(vars), MA_4, .names='MA4_{.col}')) %>%
+  
+  mutate(across(c(vars), MA_5, .names='MA5_{.col}')) %>%
+  
+  mutate(across(c(vars), MA_6, .names='MA6_{.col}')) %>%
+  
+  mutate(across(c(vars), MA_7, .names='MA7_{.col}')) %>%
+  
+  select(c("Location", "Year", "Date", starts_with("MA")))
+
+```
+
+# ENVIRO CORR PLOTS
+
+Q1: What threshold to use? 
+Q2: What MA window to use?
+
+```{r Spore threshold setting}
+
+# Set seed
+
+set.seed(42)
+
+
+# Set spore quantity thresholds for Burkard
+
+Burkard_LR <- Burkard %>% 
+  
+  mutate(thrs_0 = if_else(Quant > 0, 1, 0)) %>%
+  
+  mutate(thrs_0.5 = if_else(Quant > 0.5, 1, 0)) %>%
+  
+  mutate(thrs_1.0 = if_else(Quant > 1.0, 1, 0))
+
+
+# Set spore quantity threshold for Rotorod
+
+Rotorod_LR <- Rotorod %>% 
+  
+  mutate(thrs_0 = if_else(Quant > 0, 1, 0)) %>%
+  
+  mutate(thrs_0.5 = if_else(Quant > 0.5, 1, 0)) %>%
+  
+  mutate(thrs_1.0 = if_else(Quant > 1.0, 1, 0))
+
+
+# Bind thresholded spore trap data sets 
+
+LR <- rbind(Burkard_LR, Rotorod_LR)
+
+
+# Histograms
+
+#hist(Burkard_LR$Quant, main = paste('Histogram of Burkard raw data'))
+
+#hist(Burkard_LR$thrs_0, main = paste('Histogram of Burkard data (0 spore threshold)'))
+
+#hist(Burkard_LR$thrs_0.5, main = paste('Histogram of Burkard raw (0.5 spore threshold)'))
+
+#hist(Burkard_LR$thrs_1.0, main = paste('Histogram of Burkard raw (1.0 spore threshold)'))
+
+```
+
+```{r Correlation - 2021}
+
+# Bind MA and spore quantity data
+
+MA_LR <- left_join(x = LR, y = MA, by = c('Location', 'Date')) %>%
+  
+  # prepare SiteYear category to be used as a random effect in model
+  
+  separate_wider_delim(SampleID, delim = '_', names = c('SiteYear', 'SampleNum')) %>%
+  
+  select(-c('FAMCq', 'FAMCq_sd', 'HEXCq', 'HEXCq_sd', 'Log_Quant', 'Year.y', 'Year.x', 'SampleNum'))
+
+
+# Remove metadata and exclude years
+  
+MA_LR <- MA_LR %>% select(1, 7:10, 11:length(colnames(MA_LR)))
+
+MA_LR <- MA_LR %>%
+  
+  filter(grepl('BD21|RD21|RL21', SiteYear)) %>% 
+  
+  # normalize quant 
+  
+  group_by(SiteYear) %>%
+  
+  mutate(ScaleQuant = 100*Quant/max(Quant)) %>%
+  
+  relocate(ScaleQuant, .after = Quant)
+
+
+# Define response variable
+
+quant <- 'thrs_0' 
+
+
+# Apply correlations for all MA groups and produce separate data frames
+
+result_list <- sapply(c("MA1_", "MA2_", 'MA3_', 'MA4_', 'MA5_', 'MA6_', 'MA7_'),
+                      
+                      function(x) {
+                        
+                        # Get the filtered dataframe
+                        
+                        filtered_df <- MA_LR[startsWith(names(MA_LR), x)]
+                        
+                        # Remove suffix from column names, except for 'quant'
+                        
+                        names(filtered_df) <- sub(paste0("^", x), "", names(filtered_df))
+                        
+                        # Add the additional column if it exists
+                        
+                        if (quant %in% names(MA_LR)) {
+                          
+                          filtered_df[[quant]] <- MA_LR[[quant]]
+                        
+                          }
+                        
+                        return(filtered_df)
+                      
+                        },
+                      
+                      simplify = FALSE)
+
+
+# Save each dataframe and name based on MA group
+
+for (name in names(result_list)) {
+  
+  assign(name, result_list[[name]])
+
+  }
+
+
+# Apply and plot correlations
+
+MA1_ <- cor(MA1_, method = 'spearman')
+
+MA1_p <- cor.mtest(MA1_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p1.png', width = 2, height = 2, units = 'in', res = 600)
+
+p1 <- corrplot(MA1_, title = "1-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+                              
+               mar=c(0,0,1.75,0),
+                              
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', 
+               
+               pch.col = 'black', p.mat = MA1_p$p)
+
+dev.off()
+
+MA2_ <- cor(MA2_, method = 'spearman')
+
+MA2_p <- cor.mtest(MA2_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p2.png', width = 2, height = 2, units = 'in', res = 600)
+
+p2 <- corrplot(MA2_, title = "2-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', 
+               
+               pch.col = 'black', p.mat = MA2_p$p)
+
+dev.off()
+
+MA3_ <- cor(MA3_, method = 'spearman')
+
+MA3_p <- cor.mtest(MA3_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p3.png', width = 2, height = 2, units = 'in', res = 600)
+
+p3 <- corrplot(MA3_, title = "3-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+                              
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', 
+               
+               pch.col = 'black', p.mat = MA3_p$p)
+
+dev.off()
+
+MA4_ <- cor(MA4_, method = 'spearman')
+
+MA4_p <- cor.mtest(MA4_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p4.png', width = 2, height = 2, units = 'in', res = 600)
+
+p4 <- corrplot(MA4_, title = "4-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', 
+               
+               pch.col = 'black', p.mat = MA4_p$p)
+
+dev.off()
+
+MA5_ <- cor(MA5_, method = 'spearman')
+
+MA5_p <- cor.mtest(MA5_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p5.png', width = 2, height = 2, units = 'in', res = 600)
+
+p5 <- corrplot(MA5_, title = "5-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01,0.05), pch.cex = 0.15, insig = 'label_sig', 
+               
+               pch.col = 'black', p.mat = MA5_p$p)
+
+dev.off()
+
+MA6_ <- cor(MA6_, method = 'spearman')
+
+MA6_p <- cor.mtest(MA6_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p6.png', width = 2, height = 2, units = 'in', res = 600)
+
+p6 <- corrplot(MA6_, title = "6-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01,0.05), pch.cex = 0.15, insig = 'label_sig', 
+               
+               pch.col = 'black', p.mat = MA6_p$p)
+
+dev.off()
+
+
+# Visualization for ggcorrplot
+
+ggcorrplot(MA1_, p.mat=MA1_p$p, insig = 'blank')
+
+ggcorrplot(MA2_, p.mat=MA2_p$p, insig = 'blank')
+
+ggcorrplot(MA3_, p.mat=MA3_p$p, insig = 'blank')
+
+ggcorrplot(MA4_, p.mat=MA4_p$p, insig = 'blank')
+
+ggcorrplot(MA5_, p.mat=MA5_p$p, insig = 'blank')
+
+ggcorrplot(MA6_, p.mat=MA6_p$p, insig = 'blank')
+
+```
+
+```{r Correlation - 2023 positive years only}
+
+# Remove previous MAs
+
+rm(MA1_, MA2_,  MA3_,  MA4_,  MA5_,  MA6_)
+
+
+# Bind MA and spore quantity data
+
+MA_LR <- left_join(x = LR, y = MA, by = c('Location', 'Date')) %>%
+  
+  # prepare SiteYear category to be used as a random effect in model
+  
+  separate_wider_delim(SampleID, delim = '_', names = c('SiteYear', 'SampleNum')) %>%
+  
+  select(-c('FAMCq', 'FAMCq_sd', 'HEXCq', 'HEXCq_sd', 'Log_Quant', 'Year.y', 'Year.x', 'SampleNum'))
+
+
+# Remove metadata and exclude years
+  
+MA_LR <- MA_LR %>% select(1, 7:10, 11:length(colnames(MA_LR)))
+
+MA_LR <- MA_LR %>%
+  
+  filter(grepl('BD23|RD23', SiteYear)) %>%
+  
+  # normalize quant 
+  
+  group_by(SiteYear) %>%
+  
+  mutate(ScaleQuant = 100*Quant/max(Quant)) %>%
+  
+  relocate(ScaleQuant, .after = Quant)
+
+
+# Define response variable
+
+quant <- 'ScaleQuant' 
+
+
+# Apply correlations for all MA groups and produce separate data frames
+
+result_list <- sapply(c("MA1_", "MA2_", 'MA3_', 'MA4_', 'MA5_', 'MA6_', 'MA7_'),
+                      
+                      function(x) {
+                        
+                        # Get the filtered dataframe
+                        
+                        filtered_df <- MA_LR[startsWith(names(MA_LR), x)]
+                        
+                        # Remove suffix from column names, except for 'quant'
+                        
+                        names(filtered_df) <- sub(paste0("^", x), "", names(filtered_df))
+                        
+                        # Add the additional column if it exists
+                        
+                        if (quant %in% names(MA_LR)) {
+                          
+                          filtered_df[[quant]] <- MA_LR[[quant]]
+                        
+                          }
+                        
+                        return(filtered_df)
+                      
+                        },
+                      
+                      simplify = FALSE)
+
+
+# Save each dataframe and name based on MA group
+
+for (name in names(result_list)) {
+  
+  assign(name, result_list[[name]])
+
+  }
+
+
+# Apply and plot correlations
+
+MA1_ <- cor(MA1_, method = 'spearman')
+
+MA1_p <- cor.mtest(MA1_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p1.png', width = 2, height = 2, units = 'in', res = 600)
+
+p1 <- corrplot(MA1_, title = "1-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', 
+               
+               pch.col = 'black', p.mat = MA1_p$p)
+
+dev.off()
+
+MA2_ <- cor(MA2_, method = 'spearman')
+
+MA2_p <- cor.mtest(MA2_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p2.png', width = 2, height = 2, units = 'in', res = 600)
+
+p2 <- corrplot(MA2_, title = "2-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA2_p$p)
+
+dev.off()
+
+MA3_ <- cor(MA3_, method = 'spearman')
+
+MA3_p <- cor.mtest(MA3_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p3.png', width = 2, height = 2, units = 'in', res = 600)
+
+p3 <- corrplot(MA3_, title = "3-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA3_p$p)
+
+dev.off()
+
+MA4_ <- cor(MA4_, method = 'spearman')
+
+MA4_p <- cor.mtest(MA4_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p4.png', width = 2, height = 2, units = 'in', res = 600)
+
+p4 <- corrplot(MA4_, title = "4-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA4_p$p)
+
+dev.off()
+
+MA5_ <- cor(MA5_, method = 'spearman')
+
+MA5_p <- cor.mtest(MA5_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p5.png', width = 2, height = 2, units = 'in', res = 600)
+
+p5 <- corrplot(MA5_, title = "5-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5, 
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01,0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA5_p$p)
+
+dev.off()
+
+MA6_ <- cor(MA6_, method = 'spearman')
+
+MA6_p <- cor.mtest(MA6_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p6.png', width = 2, height = 2, units = 'in', res = 600)
+
+p6 <- corrplot(MA6_, title = "6-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01,0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA6_p$p)
+
+dev.off()
+
+
+# Visualization for ggcorrplot
+
+ggcorrplot(MA1_, p.mat=MA1_p$p, insig = 'blank')
+
+ggcorrplot(MA2_, p.mat=MA2_p$p, insig = 'blank')
+
+ggcorrplot(MA3_, p.mat=MA3_p$p, insig = 'blank')
+
+ggcorrplot(MA4_, p.mat=MA4_p$p, insig = 'blank')
+
+ggcorrplot(MA5_, p.mat=MA5_p$p, insig = 'blank')
+
+ggcorrplot(MA6_, p.mat=MA6_p$p, insig = 'blank')
+
+```
+
+```{r Correlation - 2021 and 2023}
+
+# Remove previous MAs
+
+rm(MA1_, MA2_,  MA3_,  MA4_,  MA5_,  MA6_)
+
+
+# Bind MA and spore quantity data
+
+MA_LR <- left_join(x = LR, y = MA, by = c('Location', 'Date')) %>%
+  
+  # prepare SiteYear category to be used as a random effect in model
+  
+  separate_wider_delim(SampleID, delim = '_', names = c('SiteYear', 'SampleNum')) %>%
+  
+  select(-c('FAMCq', 'FAMCq_sd', 'HEXCq', 'HEXCq_sd', 'Log_Quant', 'Year.y', 'Year.x', 'SampleNum'))
+  
+
+# Remove metadata and exclude years
+
+MA_LR <- MA_LR %>% select(1, 7:10, 11:length(colnames(MA_LR)))
+
+MA_LR <- MA_LR %>%
+  
+  filter(grepl('BD21|BD23|RD21|RL21|RD23', SiteYear)) %>%
+  
+  # normalize quant 
+  
+  group_by(SiteYear) %>%
+  
+  mutate(ScaleQuant = 100*Quant/max(Quant)) %>%
+  
+  relocate(ScaleQuant, .after = Quant)
+
+
+# Define reponse variable
+
+quant <- 'ScaleQuant' 
+
+
+# Apply correlations for all MA groups and produce separate data frames
+
+result_list <- sapply(c("MA1_", "MA2_", 'MA3_', 'MA4_', 'MA5_', 'MA6_', 'MA7_'),
+                      
+                      function(x) {
+                        
+                        # Get the filtered dataframe
+                        
+                        filtered_df <- MA_LR[startsWith(names(MA_LR), x)]
+                        
+                        # Remove suffix from column names, except for 'quant'
+                        
+                        names(filtered_df) <- sub(paste0("^", x), "", names(filtered_df))
+                        
+                        # Add the additional column if it exists
+                        
+                        if (quant %in% names(MA_LR)) {
+                          
+                          filtered_df[[quant]] <- MA_LR[[quant]]
+                        
+                          }
+                        
+                        return(filtered_df)
+                      
+                        },
+                      
+                      simplify = FALSE)
+
+
+# Save each dataframe and name based on MA group
+
+for (name in names(result_list)) {
+  
+  assign(name, result_list[[name]])
+
+  }
+
+
+# Apply and plot correlations
+
+MA1_ <- cor(MA1_, method = 'spearman')
+
+MA1_p <- cor.mtest(MA1_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p1.png', width = 2, height = 2, units = 'in', res = 600)
+
+p1 <- corrplot(MA1_, title = "1-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA1_p$p)
+
+dev.off()
+
+MA2_ <- cor(MA2_, method = 'spearman')
+
+MA2_p <- cor.mtest(MA2_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p2.png', width = 2, height = 2, units = 'in', res = 600)
+
+p2 <- corrplot(MA2_, title = "2-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA2_p$p)
+
+dev.off()
+
+MA3_ <- cor(MA3_, method = 'spearman')
+
+MA3_p <- cor.mtest(MA3_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p3.png', width = 2, height = 2, units = 'in', res = 600)
+
+p3 <- corrplot(MA3_, title = "3-day moving averages", method = "color", type = 'upper', 
+              
+                tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA3_p$p)
+
+dev.off()
+
+MA4_ <- cor(MA4_, method = 'spearman')
+
+MA4_p <- cor.mtest(MA4_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p4.png', width = 2, height = 2, units = 'in', res = 600)
+
+p4 <- corrplot(MA4_, title = "4-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA4_p$p)
+
+dev.off()
+
+MA5_ <- cor(MA5_, method = 'spearman')
+
+MA5_p <- cor.mtest(MA5_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p5.png', width = 2, height = 2, units = 'in', res = 600)
+
+p5 <- corrplot(MA5_, title = "5-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01,0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA5_p$p)
+
+dev.off()
+
+MA6_ <- cor(MA6_, method = 'spearman')
+
+MA6_p <- cor.mtest(MA6_)
+
+png('/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/p6.png', width = 2, height = 2, units = 'in', res = 600)
+
+p6 <- corrplot(MA6_, title = "6-day moving averages", method = "color", type = 'upper', 
+               
+               tl.cex = 0.30, tl.col = 'black', cl.cex = 0.30, cex.main = 0.5,
+               
+               mar=c(0,0,1.75,0),
+               
+               sig.level = c(0.001, 0.01,0.05), pch.cex = 0.15, insig = 'label_sig', pch.col = 'black', p.mat = MA6_p$p)
+
+dev.off()
+
+
+# Visualization for ggcorrplot
+
+ggcorrplot(MA1_, p.mat=MA1_p$p, insig = 'blank')
+
+ggcorrplot(MA2_, p.mat=MA2_p$p, insig = 'blank')
+
+ggcorrplot(MA3_, p.mat=MA3_p$p, insig = 'blank')
+
+ggcorrplot(MA4_, p.mat=MA4_p$p, insig = 'blank')
+
+ggcorrplot(MA5_, p.mat=MA5_p$p, insig = 'blank')
+
+ggcorrplot(MA6_, p.mat=MA6_p$p, insig = 'blank')
+
+```
+
+```{r Patchwork arrange corr plots}
+
+library(patchwork)
+
+# Requires to change to pX <- wrap_elements(~corrplot(...))
+
+MAcorr <- p1 + p2 + p3 + p4 + p5 + p6 + 
+  
+  plot_layout(ncol = 3, nrow = 2, guides = 'collect')
+
+MAcorr
+
+
+# Write out
+
+ggsave(filename = 'MAcorr_test.jpg', device = 'jpg', plot = MAcorr, 
+       
+       path = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures', 
+       
+       unit = 'mm', width = 178, height = 105)
+
+```
+
+# SINGLE VAR REGRESSIONS
+Only for data exploration
+
+```{r Burkard - all positive years}
+
+# Bind MA and spore quantity data
+
+BurkardMA_LR <- left_join(x = Burkard_LR, y = MA, by = c('Location', 'Date')) %>%
+  
+  # prepare SiteYear category to be used as a random effect in model
+  
+  separate_wider_delim(SampleID, delim = '_', names = c('SiteYear', 'SampleNum')) %>%
+  
+  select(-c('FAMCq', 'FAMCq_sd', 'HEXCq', 'HEXCq_sd', 'Log_Quant', 'Year.y', 'Year.x', 'SampleNum')) %>%
+  
+  select(1, 7, 16:120)
+
+
+# Remove metadata and exclude years
+
+BurkardMA_LR <- BurkardMA_LR %>%
+  
+  filter(grepl('BD21|BD23', SiteYear)) %>%
+  
+  # normalize quant 
+  
+  group_by(SiteYear) %>%
+  
+  mutate(ScaleQuant = 100*Quant/max(Quant)) %>%
+  
+  relocate(ScaleQuant, .after = Quant)
+
+
+# Define reponse variable
+
+quant <- 'ScaleQuant' 
+
+SiteYear <- 'SiteYear'
+
+
+# Apply correlations for all MA groups and produce separate data frames
+
+result_list <- sapply(c("MA1_", "MA2_", 'MA3_', 'MA4_', 'MA5_', 'MA6_', 'MA7_'),
+                      
+                      function(x) {
+                        
+                        # Get the filtered dataframe
+                        
+                        filtered_df <- BurkardMA_LR[startsWith(names(BurkardMA_LR), x)]
+                        
+                        # Remove suffix from column names, except for 'quant'
+                        
+                        names(filtered_df) <- sub(paste0("^", x), "", names(filtered_df))
+                        
+                        # Add the additional column if it exists
+                        
+                        if (quant %in% names(BurkardMA_LR)) {
+                          
+                          filtered_df[[quant]] <- BurkardMA_LR[[quant]]
+                        
+                          }
+                        
+                        if(SiteYear %in% names(BurkardMA_LR)) {
+                          
+                          filtered_df[[SiteYear]] <- BurkardMA_LR[[SiteYear]]
+                        
+                          }
+                        
+                        return(filtered_df)
+                      
+                        },
+                      
+                      simplify = FALSE)
+
+
+# Save each dataframe and name based on MA group
+
+for (name in names(result_list)) {
+  
+  assign(name, result_list[[name]])
+
+  }
+
+```
+
+```{r Rotorod and burkard - all positive years}
+
+# Bind MA and spore quantity data
+
+MA_LR <- left_join(x = LR, y = MA, by = c('Location', 'Date')) %>%
+  
+  # prepare SiteYear category to be used as a random effect in model
+  
+  separate_wider_delim(SampleID, delim = '_', names = c('SiteYear', 'SampleNum')) %>%
+  
+  select(-c('FAMCq', 'FAMCq_sd', 'HEXCq', 'HEXCq_sd', 'Log_Quant', 'Year.y', 'Year.x', 'SampleNum')) %>%
+  
+  select(1, 7, 11:129)
+
+
+# Define response variable
+
+quant <- 'ScaleQuant' 
+
+SiteYear <- 'SiteYear'
+
+
+# Remove metadata and exclude years
+
+MA_LR <- MA_LR %>%
+  
+  filter(grepl('BD21|BD23|RD21|RL21|RD23', SiteYear)) %>%
+  
+  # normalize quant 
+  
+  group_by(SiteYear) %>%
+  
+  mutate(ScaleQuant = 100*Quant/max(Quant)) %>%
+  
+  relocate(ScaleQuant, .after = Quant)
+
+
+# Apply correlations for all MA groups and produce separate data frames
+
+result_list <- sapply(c("MA1_", "MA2_", 'MA3_', 'MA4_', 'MA5_', 'MA6_', 'MA7_'),
+                      
+                      function(x) {
+                        
+                        # Get the filtered dataframe
+                        
+                        filtered_df <- MA_LR[startsWith(names(MA_LR), x)]
+                        
+                        # Remove suffix from column names, except for 'quant'
+                        
+                        names(filtered_df) <- sub(paste0("^", x), "", names(filtered_df))
+                        
+                        # Add the additional column if it exists
+                        
+                        if (quant %in% names(MA_LR)) {
+                          
+                          filtered_df[[quant]] <- MA_LR[[quant]]
+                        
+                          }
+                        
+                        if(SiteYear %in% names(MA_LR)) {
+                          
+                          filtered_df[[SiteYear]] <- MA_LR[[SiteYear]]
+                        
+                          }
+                        
+                        return(filtered_df)
+                      
+                        },
+                      
+                      simplify = FALSE)
+
+
+# Save each dataframe and name based on MA group
+
+for (name in names(result_list)) {
+  
+  assign(name, result_list[[name]])
+
+  }
+
+```
+
+```{r 1 day MAs}
+
+# Define data for MA
+
+response = names(MA1_[c(1:20)])
+
+response = set_names(response)
+
+
+# Function to output scatter plots for each var
+
+scatter_fun = function(x, y) {
+     
+  ggplot(MA1_, aes(x = .data[[x]], y = .data[[y]], shape = SiteYear) ) +
+          
+    geom_point() +
+          
+    theme_bw()
+
+  }
+
+
+# Output plots 
+
+explore.plots = map(response, ~scatter_fun(.x, quant))
+
+explore.plots
+
+```
+
+```{r 2 day MAs}
+
+# Define data for MA
+
+response = names(MA2_[c(1:20)])
+
+response = set_names(response)
+
+
+# Function to output scatter plots for each var
+
+scatter_fun = function(x, y) {
+     
+  ggplot(MA2_, aes(x = .data[[x]], y = .data[[y]], shape = SiteYear) ) +
+          
+    geom_point() +
+          
+    theme_bw()
+
+  }
+
+
+# Output plots 
+
+explore.plots = map(response, ~scatter_fun(.x, quant))
+
+explore.plots
+
+```
+
+```{r 3 day MAs}
+
+# Define data for MA
+
+response = names(MA3_[c(1:20)])
+
+response = set_names(response)
+
+
+# Function to output scatter plots for each var
+
+scatter_fun = function(x, y) {
+    
+   ggplot(MA3_, aes(x = .data[[x]], y = .data[[y]], shape = SiteYear) ) +
+          
+    geom_point() +
+          
+    theme_bw()
+
+  }
+
+
+# Output plots 
+
+explore.plots = map(response, ~scatter_fun(.x, quant))
+
+explore.plots
+
+```

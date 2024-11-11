@@ -1,0 +1,961 @@
+---
+title: "2_Spore trap data analysis TIMES SERIES"
+author: "Jill Check"
+date: "2024-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load packages}
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(corrplot)
+library(zoo)
+library(ggpubr)
+library(rstatix)
+library(lubridate)
+library(patchwork)
+#trace(ggpubr:::.stat_lm, edit = TRUE)
+
+```
+
+# DISEASE - TIME SERIES
+
+## Data load in and tidying
+
+```{r Rotorod data}
+
+# Load in Rotorod data and transform Cqs into spore quantity
+
+Rotorod <- read_excel('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/qPCR data/Sample_log.xlsx', sheet = 'Rotorod') %>%
+  
+  rowwise() %>%
+  
+  mutate(FAMCq = mean(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(FAMCq_sd = sd(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(HEXCq = mean(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>% 
+  
+  mutate(HEXCq_sd = sd(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(Quant = 10^((FAMCq-44.764)/-4.2249)/1000) %>%
+  
+  mutate(Log_Quant = log10(Quant+1)) %>%
+  
+  select(-c('FAM_Cq1', 'FAM_Cq2', 'HEX_Cq1', 'HEX_Cq2', 'Notes'))
+
+
+# Format date data
+
+Rotorod$Date <- format(as.Date(Rotorod$Date, format = '%Y-%m-%d'), '%m-%d-%Y')
+
+Rotorod$Date <- as.Date(Rotorod$Date, format = '%m-%d-%Y')
+
+
+# Replace NAs introduced by spore quantity calculation with 0s
+
+Rotorod <- Rotorod %>% mutate_if(is.numeric, ~replace(., is.na(.), 0))
+
+```
+
+```{r Burkard data}
+
+# Load in Burkard data and transform Cqs into spore quantity
+
+Burkard <- read_excel('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/qPCR data/Sample_log.xlsx', sheet = 'Burkard') %>%
+  
+  rowwise() %>%
+  
+  mutate(across(starts_with("FAM_"), as.double)) %>%
+  
+  mutate(across(starts_with("HEX_"), as.double)) %>%
+  
+  mutate(FAMCq = mean(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(FAMCq_sd = sd(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(HEXCq = mean(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>% 
+  
+  mutate(HEXCq_sd = sd(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>%
+  
+  mutate(Quant = 10^((FAMCq-43.099)/-3.884)/1000) %>%
+  
+  mutate(Log_Quant = log10(Quant+1)) %>%
+  
+  select(-c('FAM_Cq1', 'FAM_Cq2', 'HEX_Cq1', 'HEX_Cq2', 'Notes'))
+
+
+# Format date data
+
+Burkard$Date <- format(as.Date(Burkard$Date, format = '%Y-%m-%d'), '%m-%d-%Y')
+
+Burkard$Date <- as.Date(Burkard$Date, format = '%m-%d-%Y')
+
+
+# Replace NAs introduced by spore quantity calculation with 0s
+
+Burkard <- Burkard %>% mutate_if(is.numeric, ~replace(., is.na(.), 0))
+```
+
+```{r Disease data}
+
+# Load in disease rating data and average across plots
+
+Disease <- read_excel('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/Disease data/Disease data.xlsx', sheet = 'Data') %>%
+  
+  group_by(Location, Date) %>%
+  
+  mutate(TS_Severity = mean(Severity, na.rm = TRUE)) %>%
+  
+  select(-c('Severity')) %>%
+  
+  unique()
+
+
+# Format date data
+
+Disease$Date <- format(as.Date(Disease$Date, format = '%Y-%m-%d'), '%m-%d')
+
+Disease$Date <- as.Date(Disease$Date, format = '%m-%d')
+```
+
+```{r Weather data}
+
+# Define column names
+
+col_names = c('Date',	'MaxTemp', 'MinTemp', 'MeanTemp',	'MaxHum',	'MinHum', 'MeanHum',
+              'RH90TOT', 'MaxWS',	'MinWS', 'MeanWS', 'MaxDP', 'MinDP' , 'MeanDP', 'PcP',
+              'MaxPcP', 'Missing')
+
+
+# Define path to folder
+
+path <- '/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/Weather data/'
+
+
+# Load in weather data for each site year
+
+  # Decatur
+
+Decatur_21 <- read.csv(file.path(path, 'Decatur 2021 - Daily.csv'), 
+                       skip = 5, col.names = col_names) %>%
+  na.trim() %>%
+  mutate(Location = 'Decatur', .after = 'Date')
+
+Decatur_22 <- read.csv(file.path(path, 'Decatur 2022 - Daily.csv'), 
+                       skip = 5, col.names = col_names) %>%
+  na.trim() %>%
+  mutate(Location = 'Decatur', .after = 'Date')
+
+Decatur_23 <- read.csv(file.path(path, 'Decatur 2023 - Daily.csv'),
+                       skip = 5, col.names = col_names) %>%
+  na.trim() %>%
+  mutate(Location = 'Decatur', .after = 'Date')
+
+  # East Lansing
+
+EastLansing_21 <- read.csv(file.path(path, 'East Lansing 2021 - Daily.csv'), 
+                           skip = 5, col.names = col_names) %>%
+  na.trim() %>%
+  mutate(Location = 'East Lansing', .after = 'Date')
+
+EastLansing_22 <- read.csv(file.path(path, 'East Lansing 2022 - Daily.csv'), 
+                           skip = 5, col.names = col_names) %>%
+  na.trim() %>%
+  mutate(Location = 'East Lansing', .after = 'Date')
+
+EastLansing_23 <- read.csv(file.path(path, 'East Lansing 2023 - Daily.csv'), 
+                           skip = 5, col.names = col_names) %>%
+  na.trim() %>%
+  mutate(Location = 'East Lansing', .after = 'Date')
+
+
+# Row bind all locations for a full daily data set
+
+Weather <- rbind(Decatur_21, Decatur_22, Decatur_23, EastLansing_21, EastLansing_22, EastLansing_23)
+
+
+# Format date data
+
+Weather$Date <- as.Date(Weather$Date, format = '%m/%d/%Y')
+
+Weather <- Weather %>% mutate(Year = year(Date), .after =Location)
+
+```
+
+## Plotting
+
+```{r Plotting}
+
+# Time series plot with Rotorod data
+
+# Initiate new dataframe and format date data
+
+Rotorod_ts <- Rotorod
+
+Rotorod_ts$Date <- format(as.Date(Rotorod_ts$Date, format = '%Y-%m-%d'), '%m-%d')
+
+Rotorod_ts$Date <- as.Date(Rotorod_ts$Date, format = '%m-%d')
+
+# Create a scaling factor so a dual axis can be used
+
+scaling_factor_R <- max(Rotorod_ts$Quant)/max(Disease$TS_Severity)
+
+# Plotting
+
+Rplt <- ggplot() +
+  
+  geom_line(data=Rotorod_ts, aes(x=Date, y=Quant, linetype = 'solid'), size=1) +
+  
+  geom_line(data=Disease, aes(x=Date, y=TS_Severity*scaling_factor_R, linetype = 'dotted'), size=1) +
+  
+  geom_point(data=Rotorod_ts, aes(x=Date, y=Quant), size=1) +
+  
+  geom_point(data=Disease, aes(x=Date, y=TS_Severity*scaling_factor_R), size=1) +
+  
+  ylab('Thousands of spores') +
+  
+  scale_y_continuous(sec.axis = sec_axis(~./scaling_factor_R, name = 'Disease severity (%)')) +
+  
+  scale_x_date(breaks = '2 weeks', date_labels = "%b %d") +
+  
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  
+  theme(strip.placement = "outside") +
+  
+  facet_grid(Year ~ Location) +
+  
+  scale_linetype_manual(values = c("dotted", "solid"), 
+                        
+                        labels = c("Disease severity", "Spore quantity"), 
+                        
+                        name = "Legend") +
+  
+  labs(linetype = "Legend", title = 'Rotating arm air sampler') +
+  
+  theme(legend.position='bottom')
+
+Rplt
+
+
+# Time series plot with Burkard data
+
+# Initiate new dataframe and format date data
+
+Burkard_ts <- Burkard
+
+Burkard_ts$Date <- format(as.Date(Burkard_ts$Date, format = '%Y-%m-%d'), '%m-%d')
+
+Burkard_ts$Date <- as.Date(Burkard_ts$Date, format = '%m-%d')
+
+# Remove disease data for locations with no Burkard data
+
+Disease2 <- filter(Disease, Year == '2023' | Location == 'Decatur')
+
+# Create a scaling factor so a dual axis can be used
+
+scaling_factor_B <- max(Burkard_ts$Quant)/max(Disease2$TS_Severity)
+
+# Plotting
+
+Bplt <- ggplot() +
+  
+  geom_line(data=Burkard_ts, aes(x=Date, y=Quant, linetype = 'solid'), size=1) +
+  
+  geom_line(data=Disease2, aes(x=Date, y=TS_Severity*scaling_factor_B, linetype ='dotted'), size=1) +
+  
+  geom_point(data=Burkard_ts, aes(x=Date, y=Quant), size=1) +
+  
+  geom_point(data=Disease2, aes(x=Date, y=TS_Severity*scaling_factor_B), size=1) +
+  
+  ylab('Thousands of spores') +
+  
+  scale_y_continuous(sec.axis = sec_axis(~./scaling_factor_B, name = 'Disease severity (%)')) +
+  
+  scale_x_date(breaks = '2 weeks', date_labels = "%b %d") +
+  
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  
+  facet_wrap(~Year+Location) +
+  
+  scale_linetype_manual(values = c("dotted", "solid"),
+                        
+                        labels = c("Disease severity", "Spore quantity"), 
+                        
+                        name = "Legend") +
+  
+  labs(linetype = "Legend", title = 'Burkard') +
+  
+  theme(legend.position='bottom')
+
+Bplt
+
+
+# Glue plots together with patchwork
+
+TimeSeries <- free(Rplt) + Bplt +
+  
+  plot_layout(guides = "collect", ncol = 1, nrow = 2, axes = 'keep', axis_titles = 'collect') &
+  
+  theme(legend.box.background = element_rect(color = "black", size = 1),
+        
+        legend.position = 'bottom')
+
+TimeSeries
+
+
+# Write out
+
+ggsave(filename = 'Time series.jpg', device = 'jpg', plot = TimeSeries, 
+       
+       path = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures', 
+       
+       unit = 'mm', width = 178, height = 246)
+
+```
+# ENVIRONMENT - TIME SERIES
+
+```{r Decatur 2021}
+
+# Define start and end dates
+
+start_date <- as.Date("2021-07-07")
+
+end_date <- as.Date("2021-09-28")
+
+
+# Subset weather data by location and date
+
+Weather_ts <- Weather %>%
+  
+  subset(Year == c(2021)) %>%
+  
+  subset(Location == 'Decatur') %>%
+  
+  subset(Date >= start_date  & Date <= end_date)
+
+Weather_ts$Date <- format(as.Date(Weather_ts$Date, format = '%Y-%m-%d'), '%m-%d')
+
+Weather_ts$Date <- as.Date(Weather_ts$Date, format = '%m-%d')
+
+
+# Subset Burkard data by location and date
+
+Burkard_ts_D21 <- Burkard_ts %>%
+  
+  subset(Year == c(2021)) %>%
+  
+  subset(Location == 'Decatur')
+
+# Rescale Burkard data based on site year maximum
+
+max <- max(Burkard$Quant)
+
+Burkard_ts_D21 <- Burkard_ts_D21 %>%
+  
+  mutate(ScaleQuant = 100*Quant/max) %>%
+  
+  ungroup() %>%
+  
+  select('Date', 'Type', 'ScaleQuant')
+
+
+# Subset Rotorod data by location and date
+
+Rotorod_ts_D21 <- Rotorod_ts %>%
+  
+  subset(Year == c(2021)) %>%
+  
+  subset(Location == 'Decatur')
+
+RotorodDates <- Rotorod_ts_D21 %>%
+  
+  select(Date)
+
+# Rescale Rotorod data based on site year maximum
+
+max <- max(Rotorod$Quant)
+
+Rotorod_ts_D21 <- Rotorod_ts_D21 %>%
+  
+  mutate(ScaleQuant = 100*Quant/max) %>%
+  
+  ungroup() %>%
+  
+  select('Date', 'Type', 'ScaleQuant')
+
+# Fill Rotorod dataframe with 0 spores for dates with no samples for correct plotting
+
+start_date <- as.Date("2024-07-07")
+
+end_date <- as.Date("2024-09-28")
+
+Rotorod_ts_D21 <- Rotorod_ts_D21 %>%
+  
+  complete(Type, Date = seq.Date(start_date, end_date, by = "days"), 
+           
+           fill = list(total = 0)) %>%
+  
+  arrange(Date)
+
+
+# Bind Burkard and Rotorod air sampler data
+
+Spore_ts <- rbind(Burkard_ts_D21, Rotorod_ts_D21)
+
+# Scaling factor for dual axes for weather data
+
+scaling_factor = max(Weather_ts$MeanTemp)/max(Weather_ts$MeanHum)
+
+
+# Plotting - Weather
+
+WeatherD21_plt <- ggplot() +
+  
+  # RH
+  
+  geom_col(data=Weather_ts, aes(x=Date, y=MeanHum, fill='Relative Humidity'), size=0.5) +
+  
+  # WS
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MeanWS/scaling_factor, color='Wind Speed', linetype = 'Mean'), size=0.5) +
+  
+  #geom_path(data=Weather_ts, aes(x=Date, y=MinWS/scaling_factor, color='Wind Speed', linetype = 'Min'), size=0.5) +
+  
+  #geom_path(data=Weather_ts, aes(x=Date, y=MaxWS/scaling_factor, color='Wind Speed', linetype = 'Max'), size=0.5) +
+  
+  # Temps:
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MeanTemp/scaling_factor, color='Temperature', linetype='Mean'), size=0.5) +
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MaxTemp/scaling_factor, color='Temperature', linetype='Max'), size=0.5) +
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MinTemp/scaling_factor, color='Temperature', linetype='Min'), size=0.5) +
+  
+  # Precip
+  
+  geom_col(data=Weather_ts, aes(x=Date, y=PcP, fill='Precipitation'), size=0.5) +
+  
+  # Axis labels and background
+  
+  ylab(paste("RH (%)", 'Precip (mm)', sep="\n")) +
+  
+  theme(panel.background = element_blank()) +
+  
+  scale_y_continuous(sec.axis = sec_axis(~.*scaling_factor, name = paste('Temperature (C)', 'Wind Speed (m/s)', sep = '\n'))) +
+  
+  # Legend
+  
+  scale_fill_manual(values=c('Relative Humidity'='light gray', 'Precipitation'='darkblue'), name='Weather data') +
+  
+  scale_color_manual(values=c('Wind Speed'='black', 'Temperature'='red'), name = '') +
+
+  scale_linetype_manual(values=c('Mean'='solid', 'Max'='dashed', 'Min'='dashed'), name='') +
+  
+  theme(legend.position = 'right')
+
+
+# Plotting - Spore Quantity
+  
+  # Define custom colors for each trap type
+
+custom_colors <- c("Rotorod" = "gold", "Burkard" = 'darkgoldenrod')  
+
+SporeD21_plt <- ggplot() +
+  
+  #geom_col(data=Rotorod_ts_D21, aes(x=Date, y=Quant/scaling_factor_spore), size=0.5, fill = 'red') +
+  
+  #geom_col(data=Burkard_ts_D21, aes(x=Date, y=Quant), size=0.5, color = 'black') +
+  
+  geom_col(data=Spore_ts, aes(x=Date, y=ScaleQuant, fill = Type), position = position_dodge2()) +
+  
+  scale_fill_manual(values = custom_colors, name = 'Trap type') +
+  
+  # Labels and background
+  
+  theme(panel.background = element_blank()) +
+  
+  theme(axis.title.x=element_blank(),
+        
+        axis.text.x=element_blank(),
+        
+        axis.ticks.x=element_blank()) +
+  
+  ylab(paste('Normalized', 'Spore Quantity', sep = '\n')) +
+  
+  labs(title= 'Decatur 2021') +
+  
+  # Asterisks for dates with rotorod data
+  
+  geom_text(data = RotorodDates, aes(x = Date, y = -7.5, label = "*"), size = 5) +
+  
+  # Legend
+  
+  theme(legend.position = 'right')
+
+SporeD21_plt
+
+
+# Glue together weather and spore quantity plots with patchwork
+
+combo2_plt_D21 <-  SporeD21_plt + WeatherD21_plt +
+  
+  plot_layout(ncol = 1, nrow = 2, axes = 'collect', axis_titles = 'collect', guides = 'collect') +
+  
+  scale_x_date(breaks = '2 weeks', date_labels = "%b %d") +
+  
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+combo2_plt_D21
+
+```
+
+```{r East Lansing 2021 (no Burkard)}
+
+# Define start and end dates
+
+start_date <- as.Date("2021-07-06")
+
+end_date <- as.Date("2021-10-10")
+
+
+# Subset weather data by location and date
+
+Weather_ts <- Weather %>%
+  
+  subset(Year == c(2021)) %>%
+  
+  subset(Location == 'East Lansing') %>%
+  
+  subset(Date >= start_date  & Date <= end_date)
+
+Weather_ts$Date <- format(as.Date(Weather_ts$Date, format = '%Y-%m-%d'), '%m-%d')
+
+Weather_ts$Date <- as.Date(Weather_ts$Date, format = '%m-%d')
+
+
+# Subset Rotorod data by location and date
+
+Rotorod_ts_L21 <- Rotorod_ts %>%
+  
+  subset(Year == c(2021)) %>%
+  
+  subset(Location == 'East Lansing')
+
+RotorodDates <- Rotorod_ts_L21 %>%
+  
+  select(Date)
+
+# Rescale Rotorod data based on site year maximum
+
+max <- max(Rotorod_ts_L21$Quant)
+
+Rotorod_ts_L21 <- Rotorod_ts_L21 %>%
+  
+  mutate(ScaleQuant = 100*Quant/max) %>%
+  
+  ungroup() %>%
+  
+  select('Date', 'Type', 'ScaleQuant')
+
+# Fill Rotorod dataframe with 0 spores for dates with no samples for correct plotting
+
+start_date <- as.Date("2024-07-07")
+
+end_date <- as.Date("2024-09-28")
+
+Rotorod_ts_L21 <- Rotorod_ts_L21 %>%
+  
+  complete(Type, Date = seq.Date(start_date, end_date, by = "days"), 
+           
+           fill = list(total = 0)) %>%
+  
+  arrange(Date)
+
+
+# Create empty Burkard data for East Lansing 2021 so all subplots have the same legend
+
+Burkard_ts_L21 <- tibble(Date = seq.Date(start_date, end_date, by = "days"), Type = 'Burkard', ScaleQuant = 0)
+
+
+# Bind Burkard and Rotorod air sampler data
+
+Spore_ts <- rbind(Burkard_ts_L21, Rotorod_ts_L21)
+
+# Scaling factor for dual axes for weather data
+
+scaling_factor = max(Weather_ts$MeanTemp)/max(Weather_ts$MeanHum)
+
+
+# Plotting - Weather
+
+WeatherL21_plt <- ggplot() +
+  
+  # RH
+  
+  geom_col(data=Weather_ts, aes(x=Date, y=MeanHum, fill='Relative Humidity'), size=0.5) +
+  
+  # WS
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MeanWS/scaling_factor, color='Wind Speed', linetype = 'Mean'), size=0.5) +
+  
+  #geom_path(data=Weather_ts, aes(x=Date, y=MinWS/scaling_factor, color='Wind Speed', linetype = 'Min'), size=0.5) +
+  
+  #geom_path(data=Weather_ts, aes(x=Date, y=MaxWS/scaling_factor, color='Wind Speed', linetype = 'Max'), size=0.5) +
+  
+  # Temps:
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MeanTemp/scaling_factor, color='Temperature', linetype='Mean'), size=0.5) +
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MaxTemp/scaling_factor, color='Temperature', linetype='Max'), size=0.5) +
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MinTemp/scaling_factor, color='Temperature', linetype='Min'), size=0.5) +
+  
+  # Precip
+  
+  geom_col(data=Weather_ts, aes(x=Date, y=PcP, fill='Precipitation'), size=0.5) +
+  
+  # Labels and background
+  
+  ylab(paste("RH (%)", 'Precip (mm)', sep="\n")) +
+  
+  theme(panel.background = element_blank()) +
+  
+  scale_y_continuous(sec.axis = sec_axis(~.*scaling_factor, name = paste('Temperature (C)', 'Wind Speed (m/s)', sep = '\
+                                                                         n'))) +
+  # Legend
+  
+  scale_fill_manual(values=c('Relative Humidity'='light gray', 'Precipitation'='darkblue'), name='Weather data') +
+  
+  scale_color_manual(values=c('Wind Speed'='black', 'Temperature'='red'), name = '') +
+  
+  scale_linetype_manual(values=c('Mean'='solid', 'Max'='dashed', 'Min'='dashed'), name='') +
+  
+  theme(legend.position = 'right')
+
+
+# Plotting - Spore Quantity
+
+  # Define custom colors for each trap type
+
+custom_colors <- c("Rotorod" = "gold", "Burkard" = 'darkgoldenrod') 
+
+SporeL21_plt <- ggplot() +
+  
+  #geom_col(data=Rotorod_ts_L21, aes(x=Date, y=Quant/scaling_factor_spore), size=0.5, fill = 'red') +
+  
+  #geom_col(data=Burkard_ts_L21, aes(x=Date, y=Quant), size=0.5, color = 'black') +
+  
+  geom_col(data=Spore_ts, aes(x=Date, y=ScaleQuant, fill = Type), position = position_dodge2()) +
+  
+  scale_fill_manual(values = custom_colors, name = 'Trap type') +
+  
+  # Axis labels and background
+  
+  theme(panel.background = element_blank()) +
+  
+  theme(axis.title.x=element_blank(),
+        
+        axis.text.x=element_blank(),
+        
+        axis.ticks.x=element_blank()) +
+  
+  ylab(paste('Normalized', 'Spore Quantity', sep = '\n')) +
+  
+  labs(title = 'East Lansing 2021') +
+  
+  # Asterisks for dates with rotorod data
+  
+  geom_text(data = RotorodDates, aes(x = Date, y = -7.5, label = "*"), size = 5) +
+  
+  # Legend
+  
+  theme(legend.position = 'right')
+
+SporeL21_plt
+
+
+# Glue together weather and spore quantity plots with patchwork
+
+combo2_plt_L21 <-  SporeL21_plt + WeatherL21_plt +
+  
+  plot_layout(ncol = 1, nrow = 2, axes = 'collect', axis_titles = 'collect', guides = 'collect') +
+  
+  scale_x_date(breaks = '2 weeks', date_labels = "%b %d") +
+  
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+combo2_plt_L21
+
+```
+
+```{r Decatur 2023}
+
+# Define start and end dates
+
+start_date <- as.Date("2023-07-21")
+
+end_date <- as.Date("2023-09-22")
+
+
+# Subset weather data by location and date
+
+Weather_ts <- Weather %>%
+  
+  subset(Year == c(2023)) %>%
+  
+  subset(Location == 'Decatur') %>%
+  
+  subset(Date >= start_date  & Date <= end_date)
+
+Weather_ts$Date <- format(as.Date(Weather_ts$Date, format = '%Y-%m-%d'), '%m-%d')
+
+Weather_ts$Date <- as.Date(Weather_ts$Date, format = '%m-%d')
+
+
+# Subset Burkard data by location and date
+
+Burkard_ts_D23 <- Burkard_ts %>%
+  
+  subset(Year == c(2023)) %>%
+  
+  subset(Location == 'Decatur')
+
+# Rescale Burkard data based on site year maximum
+
+max <- max(Burkard_ts_D23$Quant)
+
+Burkard_ts_D23 <- Burkard_ts_D23 %>%
+  
+  mutate(ScaleQuant = 100*Quant/max) %>%
+  
+  ungroup() %>%
+  
+  select('Date', 'Type', 'ScaleQuant')
+
+
+# Subset Rotorod data by location and date
+
+Rotorod_ts_D23 <- Rotorod_ts %>% 
+  
+  subset(Year == c(2023)) %>%
+  
+  subset(Location == 'Decatur')
+
+RotorodDates <- Rotorod_ts_D23 %>%
+  
+  select(Date)
+
+# Rescale Rotorod data based on site year maximum
+
+max <- max(Rotorod_ts_D23$Quant)
+
+Rotorod_ts_D23 <- Rotorod_ts_D23 %>%
+  
+  mutate(ScaleQuant = 100*Quant/max) %>%
+  
+  ungroup() %>%
+  
+  select('Date', 'Type', 'ScaleQuant')
+
+# Fill Rotorod dataframe with 0 spores for dates with no samples for correct plotting
+
+start_date <- as.Date("2024-07-21")
+
+end_date <- as.Date("2024-09-22")
+
+Rotorod_ts_D23 <- Rotorod_ts_D23 %>%
+  
+  complete(Type, Date = seq.Date(start_date, end_date, by = "days"), 
+           fill = list(total = 0)) %>%
+  
+  arrange(Date)
+
+
+# Bind Burkard and Rotorod air sampler data
+
+Spore_ts <- rbind(Burkard_ts_D23, Rotorod_ts_D23)
+
+# Scaling factor for dual axes for weather data
+
+scaling_factor = max(Weather_ts$MeanTemp)/max(Weather_ts$MeanHum)
+
+
+# Plotting - Weather
+
+WeatherD23_plt <- ggplot() +
+  
+  # RH
+  
+  geom_col(data=Weather_ts, aes(x=Date, y=MeanHum, fill='Relative Humidity'), size=0.5) +
+  
+  # WS
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MeanWS/scaling_factor, color='Wind Speed', linetype = 'Mean'), size=0.5) +
+  
+  #geom_path(data=Weather_ts, aes(x=Date, y=MinWS/scaling_factor, color='Wind Speed', linetype = 'Min'), size=0.5) +
+  
+  #geom_path(data=Weather_ts, aes(x=Date, y=MaxWS/scaling_factor, color='Wind Speed', linetype = 'Max'), size=0.5) +
+  
+  # Temps:
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MeanTemp/scaling_factor, color='Temperature', linetype='Mean'), size=0.5) +
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MaxTemp/scaling_factor, color='Temperature', linetype='Max'), size=0.5) +
+  
+  geom_path(data=Weather_ts, aes(x=Date, y=MinTemp/scaling_factor, color='Temperature', linetype='Min'), size=0.5) +
+  
+  # Precip
+  
+  geom_col(data=Weather_ts, aes(x=Date, y=PcP, fill='Precipitation'), size=0.5) +
+  
+  # Labels and background
+  
+  ylab(paste("RH (%)", 'Precip (mm)', sep="\n")) +
+  
+  theme(panel.background = element_blank()) +
+  
+  scale_y_continuous(sec.axis = sec_axis(~.*scaling_factor, name = paste('Temperature (C)', 'Wind Speed (m/s)', sep = '\n'))) +
+  
+  # Legend
+  
+  scale_fill_manual(values=c('Relative Humidity'='light gray', 'Precipitation'='darkblue'), name='Weather data') +
+  
+  scale_color_manual(values=c('Wind Speed'='black', 'Temperature'='red'), name = '') +
+  
+  scale_linetype_manual(values=c('Mean'='solid', 'Max'='dashed', 'Min'='dashed'), name='') +
+  
+  theme(legend.position = 'right')
+
+
+# Plotting - Spore Quantitiy
+  
+  # Define custom colors for each trap type
+
+custom_colors <- c("Rotorod" = "gold", "Burkard" = 'darkgoldenrod') 
+
+SporeD23_plt <- ggplot() +
+  
+  #geom_col(data=Rotorod_ts_D23, aes(x=Date, y=Quant/scaling_factor_spore), size=0.5, fill = 'red') +
+  
+  #geom_col(data=Burkard_ts_D23, aes(x=Date, y=Quant), size=0.5, color = 'black') +
+  
+  geom_col(data=Spore_ts, aes(x=Date, y=ScaleQuant, fill = Type), position = position_dodge2()) +
+  
+  scale_fill_manual(values = custom_colors, name = 'Trap type') +
+  
+  # Axis labels and background
+  
+  theme(panel.background = element_blank()) +
+  
+  theme(axis.title.x=element_blank(),
+        
+        axis.text.x=element_blank(),
+        
+        axis.ticks.x=element_blank()) +
+  
+  ylab(paste('Normalized', 'Spore Quantity', sep = '\n')) +
+  
+  labs(title = 'Decatur 2023') +
+  
+  # Asterisks for dates with rotorod data
+  
+  geom_text(data = RotorodDates, aes(x = Date, y = -7.5, label = "*"), size = 5) +
+  
+  # Legend
+  
+  theme(legend.position = 'right')
+
+
+# Glue together weather and spore quantity plots with patchwork
+
+SporeD23_plt
+
+combo2_plt_D23 <-  SporeD23_plt + WeatherD23_plt +
+  
+  plot_layout(ncol = 1, nrow = 2, axes = 'collect', axis_titles = 'collect', guides = 'collect') +
+  
+  scale_x_date(breaks = '2 weeks', date_labels = "%b %d") +
+  
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+combo2_plt_D23
+
+
+# Write out - for snipping legend!
+
+ggsave(filename = 'Time series legend snip.jpg', device = 'jpg', plot = combo2_plt_D23, 
+       
+       path = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures', 
+       
+       unit = 'mm', width = 178, height = 246)
+
+```
+
+```{r All years overlay patchwork}
+
+# Using patchwork to overlay all years
+
+combo_plt_final <- 
+  
+  combo2_plt_L21 / 
+  
+  combo2_plt_D21 / 
+  
+  combo2_plt_D23 /
+  
+  plot_layout(nrow = 4, , axes = 'collect', axis_titles = 'collect', guides = 'collect')
+
+combo_plt_final
+
+
+# Write out
+
+ggsave(filename = 'Time series w weather.jpg', device = 'jpg', plot = combo_plt_final, 
+       
+       path = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures', 
+       
+       unit = 'mm', width = 178, height = 246)
+
+```
+
+```{r All years overlay ggarrange}
+
+combo_plt_final <- 
+  
+ggpubr::ggarrange(
+  
+  combo2_plt_L21,
+  
+  combo2_plt_D21,
+  
+  combo2_plt_D23,
+  
+  align = "hv", # Align them both, horizontal and vertical
+  
+  nrow = 3, # number of rows
+  
+  legend = 'right'
+
+  )
+
+combo_plt_final
+
+
+# Write out
+
+ggsave(filename = 'Time series w weather.jpg', device = 'jpg', plot = combo_plt_final, 
+       
+       path = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures', 
+       
+       unit = 'mm', width = 178, height = 246)
+
+```
+
