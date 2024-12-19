@@ -9,7 +9,7 @@ Email: checkjil@msu.edu
 ## Publication information  
 Title:  
 Journal:  
-Authors: Check, J. C., Jacobs, J. L., Phillips, P. J., Chilvers, M. I.  
+Authors: Check, J. C., Jacobs, J. L., Phillips, P. J., Roggenkamp, E. M., Willbur, J., Chilvers, M. I.  
 doi: <XXXX>  
 
 
