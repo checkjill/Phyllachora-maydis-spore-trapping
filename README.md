@@ -39,7 +39,6 @@ Sample_log.xlsx
 3_Spore trap data analysis ENVIRO.Rmd  
 4_Spore trap data analysis LOGREG.Rmd  
 5_Spore trap data analysis MODELTEST.Rmd  
-X_Spore trap data analysis SVM.Rmd  
 
 ### Files for the HPCC:  
 LRBasicNoScale.R  
