@@ -15,18 +15,6 @@ doi: <XXXX>
 
 ## Contents
 ### Data files:  
-**Molecular methods testing data:**  
-HHIC_testing.csv  
-Standard_curve.csv 
-
-**Weather data:**  
-Decatur 2021 - Hourly.csv  
-Decatur 2022 - Hourly.csv  
-Decatur 2023 - Hourly.csv  
-East Lansing 2021 - Hourly.csv  
-East Lansing 2022 - Hourly.csv  
-East Lansing 2023 - Hourly.csv  
-
 **Air sampler data:**  
 Sample_log.xlsx  
 
