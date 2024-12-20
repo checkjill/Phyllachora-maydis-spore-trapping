@@ -24,51 +24,44 @@ library(lubridate)
 
 col_names = c('Date',	'hour', 'temp', 'hum',	'WS',	'DP', 'Pcp')
 
-
 # Define path to folder
 
 path <- '/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/Weather data/'
-
 
 # Load in weather data for each site year
 
   # Decatur
 
-Decatur_21 <- read.csv(file.path(path, 'Decatur 2021 - Hourly.csv'), 
-                       skip = 5, col.names = col_names) %>%
+Decatur_21 <- read.csv(file.path(path, 'Decatur 2021 - Hourly.csv'), skip = 5, col.names = col_names) %>%
   na.trim() %>%
   mutate(Location = 'Decatur', .after = 'Date')
 
-Decatur_22 <- read.csv(file.path(path, 'Decatur 2022 - Hourly.csv'), 
-                       skip = 5, col.names = col_names) %>%
+Decatur_22 <- read.csv(file.path(path, 'Decatur 2022 - Hourly.csv'), skip = 5, col.names = col_names) %>%
   na.trim() %>%
   mutate(Location = 'Decatur', .after = 'Date')
 
-Decatur_23 <- read.csv(file.path(path, 'Decatur 2023 - Hourly.csv'), 
-                       skip = 5, col.names = col_names) %>%
+Decatur_23 <- read.csv(file.path(path, 'Decatur 2023 - Hourly.csv'), skip = 5, col.names = col_names) %>%
   na.trim() %>%
   mutate(Location = 'Decatur', .after = 'Date')
 
   # East Lansing
 
-EastLansing_21 <- read.csv(file.path(path, 'East Lansing 2021 - Hourly.csv'), 
-                           skip = 5, col.names = col_names) %>%
+EastLansing_21 <- read.csv(file.path(path, 'East Lansing 2021 - Hourly.csv'), skip = 5, col.names = col_names) %>%
   na.trim() %>%
   mutate(Location = 'East Lansing', .after = 'Date')
 
-EastLansing_22 <- read.csv(file.path(path, 'East Lansing 2022 - Hourly.csv'), 
-                           skip = 5, col.names = col_names) %>%
+EastLansing_22 <- read.csv(file.path(path, 'East Lansing 2022 - Hourly.csv'), skip = 5, col.names = col_names) %>%
   na.trim() %>%
   mutate(Location = 'East Lansing', .after = 'Date')
 
-EastLansing_23 <- read.csv(file.path(path, 'East Lansing 2023 - Hourly.csv'), 
-                           skip = 5, col.names = col_names) %>%
+EastLansing_23 <- read.csv(file.path(path, 'East Lansing 2023 - Hourly.csv'), skip = 5, col.names = col_names) %>%
   na.trim() %>%
   mutate(Location = 'East Lansing', .after = 'Date')
+
 ```
 
 
-```{r Hourly data set}
+```{r Bind data}
 
 # Row bind all locations for a full hourly data set
 
@@ -88,102 +81,61 @@ rm(Decatur_21, Decatur_22, Decatur_23, EastLansing_21, EastLansing_22, EastLansi
 
 ```
 
-```{r Daily stats}
+```{r Calculate daily stats}
 
 # Specific thresholds based on Hock et al. 1995 (temp range) and Webster et al. 2024 (humidity thresholds, nighttime humidity)
 
 Daily <- Hourly %>%
-  
   mutate(hum70 = ifelse(hum > 70, 1, 0)) %>%
-  
   mutate(hum80 = ifelse(hum > 80, 1, 0)) %>%
-  
   mutate(hum90 = ifelse(hum > 90, 1, 0)) %>%
-  
   mutate(tempdur_Webster = ifelse(temp > 18 & temp < 25, 1, 0)) %>%
-  
   mutate(tempdur_Hock = ifelse(temp > 17 & temp < 23, 1, 0)) %>%
-  
   mutate(wetnight = ifelse((hour < 6 & hum > 90) | (hour > 22 & hum > 90), 1, 0)) %>%
-  
   mutate(Hockpeak1 = ifelse(temp > 16.6 & temp < 23 & hum > 85, 1, 0)) %>%
-  
   mutate(Hockpeak2 = ifelse(temp > 23.6 & hum < 70, 1, 0)) %>%
-  
   mutate(hour = sprintf("%02d:00", hour)) %>%
-  
   mutate(date_time = ymd_hm(paste(Date, hour))) %>%
-  
   mutate(Date = as.Date(date_time)) %>%
-  
   relocate(date_time, .before = Date)
-
 
 # Summarize by hourly data by functions (maximum, minimum, mean, duration) into daily data
 
 Weather <- Daily %>%
-  
   group_by(Date, Location) %>%            
-  
   summarise(
-    
     temp_max = max(temp, na.rm = TRUE),
-    
     temp_min = min(temp, na.rm = TRUE),
-    
     temp_mean = mean(temp, na.rm = TRUE),
-    
     hum_max = max(hum, na.rm = TRUE),
-    
     hum_min = min(hum, na.rm = TRUE),
-    
     hum_mean = mean(hum, na.rm = TRUE),
-    
     WS_max = max(WS, na.rm = TRUE),
-    
     WS_min = min(WS, na.rm = TRUE),
-    
     WS_mean = mean(WS, na.rm = TRUE),
-    
     # ignoring DP
-    
     #DP_max = max(DP, na.rm = TRUE),
-    
     #DP_min = min(DP, na.rm = TRUE),
-    
     #DP_mean = mean(DP, na.rm = TRUE),
-    
     Pcp_max = max(Pcp, na.rm = TRUE),
-    
     #Pcp_min = min(Pcp, na.rm = TRUE),
-    
     Pcp = sum(Pcp, na.rm = TRUE),
-    
-    # thresholds
-    
+    # durations
     hum70 = sum(hum70, na.rm = TRUE),
-    
     hum80 = sum(hum80, na.rm = TRUE),
-    
     hum90 = sum(hum90, na.rm = TRUE),
-    
     tempdur_Webster = sum(tempdur_Webster, na.rm = TRUE),
-    
     tempdur_Hock = sum(tempdur_Hock, na.rm = TRUE),
-    
     wetnight = sum(wetnight, na.rm = TRUE),
-    
     Hockpeak1 = sum(Hockpeak1, na.rm = TRUE),
-    
     Hockpeak2 = sum(Hockpeak2, na.rm = TRUE)) %>%
-  
   ungroup()
 
 ```
 
-```{r Weather data csv write out}
+```{r CSV write out}
 
-write.csv(Weather, file = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Data/Weather data/Summarized.csv')
+#write.csv(Weather, file = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Data/Weather data/Summarized.csv')
 
 ```
 
