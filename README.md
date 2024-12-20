@@ -41,7 +41,5 @@ Sample_log.xlsx
 5_Spore trap data analysis MODELTEST.Rmd  
 
 ### Files for the HPCC:  
-LRBasicNoScale.R  
-LRBasicNoScale.sh  
 LRBasic.R  
 LRBasic.sh  
