@@ -1,0 +1,312 @@
+---
+title: "5_Spore trap data analysis MODELTEST"
+output: html_document
+date: "2024-11-05"
+---
+
+```{r Load packages}
+
+library(readxl)
+library(dplyr)
+library(lme4)
+library(caret)
+library(pROC)
+
+```
+
+```{r Load in data}
+
+# read LRdat for HPCC upload
+
+LRdat<- read.csv(file = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Code/HPCC/LRdat_noscale.csv') %>%
+  select('thrs_0', 'SiteYear', starts_with('MA1_')) %>%
+  select(1:15)
+
+# note: LRdat is SCALED, LRdat_noscale is not, would prefer to use unscaled for interpretability
+
+```
+
+```{r Define formulas}
+
+# Define the list of formulas
+
+formulas <- c(
+  'thrs_0 ~ 1 + MA1_temp_mean + (1 | SiteYear)',
+  'thrs_0 ~ 1 + MA1_temp_min + (1 | SiteYear)',
+  'thrs_0 ~ 1 + MA1_hum_mean + (1 | SiteYear)', # not selected very high from HPCC glmulti but curious to see significance and coefficient
+  'thrs_0 ~ 1 + MA1_hum_min + (1 | SiteYear)', # not selected very high from HPCC glmulti but curious to see significance and coefficient
+  'thrs_0 ~ 1 + MA1_temp_min + MA1_hum_max + (1 | SiteYear)',
+  'thrs_0 ~ 1 + MA1_temp_mean + MA1_hum_mean + (1 | SiteYear)',
+  'thrs_0 ~ 1 + MA1_temp_mean + MA1_hum_min + (1 | SiteYear)',
+  'thrs_0 ~ 1 + MA1_temp_mean + MA1_hum_max + (1 | SiteYear)',
+  'thrs_0 ~ 1 + MA1_temp_min + MA1_WS_min + (1 | SiteYear)',
+  'thrs_0 ~ 1 + MA1_temp_min + MA1_hum_max + MA1_WS_min + (1 | SiteYear)',
+  'thrs_0 ~ 1 + MA1_temp_min + MA1_hum_max + MA1_Pcp_max + (1 | SiteYear)',
+  'thrs_0 ~ 1 + MA1_temp_min + MA1_hum_max + MA1_WS_max + (1 | SiteYear)')
+
+```
+
+```{r balanced data set}
+
+# Should I reduce the dataset but have it be balanced to help with sensitivity/specificity issue?
+# NO! Change the probability threshold instead!
+"
+# Get the indices for each class
+class_0_indices <- which(LRdat$thrs_0 == 0)
+class_1_indices <- which(LRdat$thrs_0 == 1)
+
+# Determine the minimum class size
+min_class_size <- min(length(class_0_indices), length(class_1_indices))
+
+# Randomly sample from both classes to ensure equal proportions
+set.seed(123)  # Set seed for reproducibility
+class_0_sample <- sample(class_0_indices, min_class_size)
+class_1_sample <- sample(class_1_indices, min_class_size)
+
+# Combine the sampled indices
+LRdat <- LRdat[c(class_0_sample, class_1_sample), ]
+"
+```
+
+
+```{r model fitting and probability threshold testing}
+
+# Initialize a list to store results
+performance_df <- data.frame(
+  formula = character(),
+  coefs = numeric(),
+  threshold = numeric(),
+  aic = numeric(),
+  AUROC = numeric(), 
+  Tjur = numeric(),
+  kappa = numeric(),
+  P = numeric(),
+  accuracy = numeric(),
+  balanced_accuracy = numeric(),
+  specificity = numeric(),
+  sensitivity = numeric(),
+  FPR = numeric(),
+  FNR = numeric(),
+  PPV = numeric(),
+  NPV = numeric(),
+  stringsAsFactors = FALSE
+  )
+
+# Define the thresholds to evaluate
+
+thresholds <- seq(0.15, 0.35, by = 0.01)  
+
+# Loop over each formula
+
+for (formula in formulas) {
+  
+  # Fit the logistic regression model
+  model <- glmer(as.formula(formula), data = LRdat, family = binomial(link = 'logit'))
+  
+  # Make predictions
+  pred_prob <- predict(model, type = "response")
+  
+  # Loop over each threshold
+  for (threshold in thresholds) {
+    
+    # Convert probabilities to binary outcome using the current threshold
+    pred_class <- ifelse(pred_prob > threshold, 1, 0)
+    pred_class <- as.integer(pred_class)
+    
+    # Calculate AUROC
+    trues <- LRdat$thrs_0
+    roc_object <- roc(response = trues, predictor = pred_class, direction = '<', levels=c(0, 1))
+    AUROC <- auc(roc_object)
+    
+    # Make the confusion matrix
+    conf_matrix <- confusionMatrix(factor(pred_class), factor(trues))
+    
+    # Calc FPR and FNR
+    FP <- conf_matrix$table[1,2]
+    FN <- conf_matrix$table[2,1]
+    TP <- conf_matrix$table[1,1]
+    TN <- conf_matrix$table[2,2]
+    
+    # Add the results to the dataframe
+    performance_df <- rbind(performance_df, data.frame(
+      formula = as.character(formula),
+      coefs = paste(names(fixef(model)), fixef(model), sep = ':', collapse = ', '),
+      threshold = threshold,
+      aic = AIC(model),
+      AUROC = AUROC,
+      Tjur = conf_matrix$byClass['Sensitivity'] + conf_matrix$byClass['Specificity'] - 1,
+      kappa = conf_matrix$overall['Kappa'],
+      P = conf_matrix$overall['McnemarPValue'],
+      accuracy = conf_matrix$overall['Accuracy']*100,
+      balanced_accuracy = conf_matrix$byClass['Balanced Accuracy']*100,
+      specificity = conf_matrix$byClass['Specificity']*100,
+      sensitivity = conf_matrix$byClass['Sensitivity']*100,
+      FPR = (FP/(FP + TN))*100,
+      FNR = (FN/(FN + TP))*100, 
+      PPV = conf_matrix$byClass['Precision']*100,
+      NPV = conf_matrix$byClass['Neg Pred Value']*100,
+      stringsAsFactors = FALSE))
+  }
+}
+
+# Summarize output by threshold 
+
+performance_df_threshold <- performance_df %>%
+  group_by(threshold) %>%
+  summarise(across(aic:NPV, ~ mean(.x, na.rm = TRUE)))
+
+```
+
+```{r subset models and export}
+
+# Chosen threshold = 0.30 (based on where sensitivity X specificity and FPR X FNR rate converge)
+
+# Or should threshold 0.23 based on AUROC?
+
+performance_df_final1 <- performance_df %>%
+  dplyr::filter(abs(threshold - 0.30) < 1e-6)
+
+performance_df_final2 <- performance_df %>%
+  dplyr::filter(abs(threshold - 0.23) < 1e-6)
+
+# Table for export
+
+library(openxlsx)
+
+# Specify the path to the Excel file
+file_path <- '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Tables.xlsx'
+
+# Check if the file exists
+if (file.exists(file_path)) {
+  
+  # Load the existing workbook
+  wb <- loadWorkbook(file_path)
+  
+  # Write the data to a specific sheet 
+  writeData(wb, sheet = 'LOGREG RAW', performance_df_final1, startCol = 1, startRow = 1)
+
+  } else {
+  
+  # Create a new workbook if the file doesn't exist
+  wb <- createWorkbook()
+  addWorksheet(wb, "Sheet1")
+  writeData(wb, sheet = "Sheet1", data)
+}
+
+# Save the workbook - BE CAREFUL WITH OVERWRITING!
+#saveWorkbook(wb, file_path, overwrite = TRUE)
+
+```
+
+```{r Declare final model}
+
+finalmodel <- glmer(as.formula('thrs_0 ~ 1 + MA1_temp_mean + MA1_hum_max + (1|SiteYear)'), data = LRdat, family = binomial(link = 'logit'))
+
+```
+
+```{r Decatur 2021 surface}
+
+x_tilde <- LRdat %>%
+  filter(SiteYear == 'BD21')
+x_tilde <- expand.grid(MA1_temp_mean=seq(min(x_tilde$MA1_temp_mean), max(x_tilde$MA1_temp_mean), length.out=10), 
+                       MA1_hum_max=seq(min(x_tilde$MA1_hum_max), max(x_tilde$MA1_hum_max), length.out=10),
+                       SiteYear = 'BD21')
+
+
+pred_prob <- predict(finalmodel, newdata=x_tilde, type = 'response')
+
+DEC21 <- cbind(pred_prob, x_tilde)
+wireframe(pred_prob ~ MA1_temp_mean + MA1_hum_max, data=DEC21,
+          main = list('Decatur 2021'), 
+          xlab = list("Mean temp (C)", rot = -51, vjust = 1.5),
+          ylab = list('Max humidity (%)', rot = 22, vjust = 1.5), 
+          zlab = list('Probability', rot = 274, vjust = 1.5),
+          drape = TRUE,
+          scales = list(arrows=FALSE, cex=.5, tick.number = 5, z = list(arrows=T), distance =c(0.5, 0.5, 0.5)),
+          light.source = c(10,0,10),
+          colorkey = list(at = seq(0, 1, length.out = 100),
+                          labels = list(at = seq(0, 1, length.out = 11))),
+          screen = list(z = -60, x = -60)
+)
+
+```
+
+```{r Decatur 2022 surface}
+
+x_tilde <- LRdat %>%
+  filter(SiteYear == 'BD22')
+x_tilde <- expand.grid(MA1_temp_mean=seq(min(x_tilde$MA1_temp_mean), max(x_tilde$MA1_temp_mean), length.out=10), 
+                       MA1_hum_max=seq(min(x_tilde$MA1_hum_max), max(x_tilde$MA1_hum_max), length.out=10),
+                       SiteYear = 'BD22')
+
+
+pred_prob <- predict(finalmodel, newdata=x_tilde, type = 'response')
+
+DEC22 <- cbind(pred_prob, x_tilde)
+wireframe(pred_prob ~ MA1_temp_mean + MA1_hum_max, data=DEC22,
+          main = list('Decatur 2022'), 
+          xlab = list("Mean temp (C)", rot = -51, vjust = 1.5),
+          ylab = list('Max humidity (%)', rot = 22, vjust = 1.5), 
+          zlab = list('Probability', rot = 274, vjust = 1.5),
+          drape = TRUE,
+          scales = list(arrows=FALSE, cex=.5, tick.number = 5, z = list(arrows=T), distance =c(0.5, 0.5, 0.5)),
+          light.source = c(10,0,10),
+          colorkey = list(at = seq(0, 1, length.out = 100),
+            labels = list(at = seq(0, 1, length.out = 11))),
+          screen = list(z = -60, x = -60)
+)
+```
+
+```{r Decatur 2023 surface}
+
+x_tilde <- LRdat %>%
+  filter(SiteYear == 'BD23')
+x_tilde <- expand.grid(MA1_temp_mean=seq(min(x_tilde$MA1_temp_mean), max(x_tilde$MA1_temp_mean), length.out=10), 
+                       MA1_hum_max=seq(min(x_tilde$MA1_hum_max), max(x_tilde$MA1_hum_max), length.out=10),
+                       SiteYear = 'BD23')
+
+
+pred_prob <- predict(finalmodel, newdata=x_tilde, type = 'response')
+
+DEC23 <- cbind(pred_prob, x_tilde)
+wireframe(pred_prob ~ MA1_temp_mean + MA1_hum_max, data=DEC23,
+          main = list('Decatur 2023'), 
+          xlab = list("Mean temp (C)", rot = -51, vjust = 1.5),
+          ylab = list('Max humidity (%)', rot = 22, vjust = 1.5), 
+          zlab = list('Probability', rot = 274, vjust = 1.5),
+          drape = TRUE,
+          scales = list(arrows=FALSE, cex=.5, tick.number = 5, z = list(arrows=T), distance =c(0.5, 0.5, 0.5)),
+          light.source = c(10,0,10),
+          colorkey = list(at = seq(0, 1, length.out = 100),
+                          labels = list(at = seq(0, 1, length.out = 11))),
+          screen = list(z = -60, x = -60)
+)
+
+```
+
+```{r East Lansing 2023 surface}
+
+x_tilde <- LRdat %>%
+  filter(SiteYear == 'BL23')
+x_tilde <- expand.grid(MA1_temp_mean=seq(min(x_tilde$MA1_temp_mean), max(x_tilde$MA1_temp_mean), length.out=10), 
+                       MA1_hum_max=seq(min(x_tilde$MA1_hum_max), max(x_tilde$MA1_hum_max), length.out=10),
+                       SiteYear = 'BL23')
+
+
+pred_prob <- predict(finalmodel, newdata=x_tilde, type = 'response')
+
+EL23 <- cbind(pred_prob, x_tilde)
+wireframe(pred_prob ~ MA1_temp_mean + MA1_hum_max, data=EL23,
+          main = list('East Lansing 2023'), 
+          xlab = list("Mean temp (C)", rot = -51, vjust = 1.5),
+          ylab = list('Max humidity (%)', rot = 22, vjust = 1.5), 
+          zlab = list('Probability', rot = 274, vjust = 1.5),
+          drape = TRUE,
+          scales = list(arrows=FALSE, cex=.5, tick.number = 5, z = list(arrows=T), distance =c(0.5, 0.5, 0.5)),
+          light.source = c(10,0,10),
+          colorkey = list(at = seq(0, 1, length.out = 100),
+                          labels = list(at = seq(0, 1, length.out = 11))),
+          screen = list(z = -60, x = -60)
+)
+
+```

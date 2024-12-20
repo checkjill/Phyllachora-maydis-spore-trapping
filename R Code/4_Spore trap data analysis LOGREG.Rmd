@@ -1,0 +1,386 @@
+---
+title: "4_Spore trap data analysis LOGREG"
+author: "Jill Check"
+date: "2024-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load packages}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(corrplot)
+library(stringr)
+library(zoo)
+library(ggpubr)
+library(rstatix)
+library(lubridate)
+library(patchwork)
+#trace(ggpubr:::.stat_lm, edit = TRUE)
+```
+
+# ENVIRONMENTAL DATA LOAD IN
+
+### Data load in and tidying
+
+```{r Rotorod data}
+Rotorod <- read_excel('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/qPCR data/Sample_log.xlsx', sheet = 'Rotorod') %>%
+  rowwise() %>%
+  mutate(FAMCq = mean(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  mutate(FAMCq_sd = sd(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  mutate(HEXCq = mean(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>% 
+  mutate(HEXCq_sd = sd(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>%
+  mutate(Quant = 10^((FAMCq-44.764)/-4.2249)/1000) %>%
+  mutate(Log_Quant = log10(Quant+1)) %>%
+  select(-c('FAM_Cq1', 'FAM_Cq2', 'HEX_Cq1', 'HEX_Cq2', 'Notes'))
+
+Rotorod <- Rotorod %>%
+  group_by(Year, Location) %>% 
+  mutate(cumsumQuant = cumsum(Quant))
+
+Rotorod$Date <- format(as.Date(Rotorod$Date, format = '%Y-%m-%d'), '%m-%d-%Y')
+
+Rotorod$Date <- as.Date(Rotorod$Date, format = '%m-%d-%Y')
+
+Rotorod <- Rotorod %>% mutate_if(is.numeric, ~replace(., is.na(.), 0))
+```
+
+```{r Burkard data}
+Burkard <- read_excel('/Users/jilliancheck/OneDrive - Michigan State University/Documents/Work/Spore Trapping/Data/qPCR data/Sample_log.xlsx', sheet = 'Burkard') %>%
+  rowwise() %>%
+  mutate(across(starts_with("FAM_"), as.double)) %>%
+  mutate(across(starts_with("HEX_"), as.double)) %>%
+  mutate(FAMCq = mean(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  mutate(FAMCq_sd = sd(c_across(c('FAM_Cq1', 'FAM_Cq2')), na.rm=TRUE)) %>%
+  mutate(HEXCq = mean(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>% 
+  mutate(HEXCq_sd = sd(c_across(c('HEX_Cq1', 'HEX_Cq2')), na.rm=TRUE)) %>%
+  mutate(Quant = 10^((FAMCq-43.099)/-3.884)/1000) %>%
+  mutate(Log_Quant = log10(Quant+1)) %>%
+  select(-c('FAM_Cq1', 'FAM_Cq2', 'HEX_Cq1', 'HEX_Cq2', 'Notes'))
+
+Burkard$Date <- format(as.Date(Burkard$Date, format = '%Y-%m-%d'), '%m-%d-%Y')
+
+Burkard$Date <- as.Date(Burkard$Date, format = '%m-%d-%Y')
+
+Burkard <- Burkard %>% mutate_if(is.numeric, ~replace(., is.na(.), 0))
+```
+
+```{r Weather data}
+
+Weather <- read.csv(file='/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Data/Weather data/Summarized.csv') %>%
+  select(!X) %>%
+  mutate(Year = year(Date), .after = Location) %>%
+  mutate(across(4:15, ~ scale(.) %>% as.vector()))
+Weather_noscale <- read.csv(file='/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Data/Weather data/Summarized.csv') %>%
+  select(!X) %>%
+  mutate(Year = year(Date), .after = Location)
+
+Weather$Date <- as.Date(Weather$Date, format = '%Y - %m - %d')
+Weather_noscale$Date <- as.Date(Weather_noscale$Date, format = '%Y - %m - %d')
+```
+
+```{r MA calcs}
+
+MA_1 = function(x) 
+  rollmean(x, k = 1, fill = NA, align = "right")
+MA_2 = function(x) 
+  rollmean(x, k = 2, fill = NA, align = "right")
+MA_3 = function(x) 
+  rollmean(x, k = 3, fill = NA, align = "right")
+MA_4 = function(x) 
+  rollmean(x, k = 4, fill = NA, align = "right")
+
+vars <- names(Weather[4:length(colnames(Weather))])
+vars <- names(Weather_noscale[4:length(colnames(Weather_noscale))])
+
+MA <- 
+  Weather %>% 
+  group_by(Location, Year) %>% 
+  mutate(across(c(vars), MA_1, .names='MA1_{.col}')) %>%
+  mutate(across(c(vars), MA_2, .names='MA2_{.col}')) %>%
+  mutate(across(c(vars), MA_3, .names='MA3_{.col}')) %>%
+  mutate(across(c(vars), MA_4, .names='MA4_{.col}')) %>%
+  select(c("Location", "Year", "Date", starts_with("MA")))
+
+MA_noscale <- 
+  Weather_noscale %>% 
+  group_by(Location, Year) %>% 
+  mutate(across(c(vars), MA_1, .names='MA1_{.col}')) %>%
+  mutate(across(c(vars), MA_2, .names='MA2_{.col}')) %>%
+  mutate(across(c(vars), MA_3, .names='MA3_{.col}')) %>%
+  mutate(across(c(vars), MA_4, .names='MA4_{.col}')) %>%
+  select(c("Location", "Year", "Date", starts_with("MA")))
+```
+
+```{r spore threshold setting}
+
+set.seed(42)
+
+# Set threshold (testing multiple)
+Burkard_LR <- Burkard %>% 
+  mutate(thrs_0 = if_else(Quant > 0, 1, 0)) %>%
+  mutate(thrs_0.5 = if_else(Quant > 0.5, 1, 0)) %>%
+  mutate(thrs_1.0 = if_else(Quant > 1.0, 1, 0))
+
+# Histograms
+#hist(Burkard_LR$Quant, main = paste('Histogram of Burkard raw data'))
+#hist(Burkard_LR$thrs_0, main = paste('Histogram of Burkard data (0 spore threshold)'))
+#hist(Burkard_LR$thrs_0.5, main = paste('Histogram of Burkard raw (0.5 spore threshold)'))
+#hist(Burkard_LR$thrs_1.0, main = paste('Histogram of Burkard raw (1.0 spore threshold)'))
+```
+
+```{r curate LR dataset}
+
+# MA window to use - 1 day
+
+LRdat <- left_join(x = Burkard_LR, y = MA, by = c('Location', 'Date')) %>%
+  
+  # prepare SiteYear category to be used as a random effect in model
+  separate_wider_delim(SampleID, delim = '_', names = c('SiteYear', 'SampleNum')) %>%
+  
+  select(-c('FAMCq', 'FAMCq_sd', 'HEXCq', 'HEXCq_sd', 'Log_Quant', 'Year.y', 'Year.x', 'SampleNum', contains('Hock'), contains('Webster')))
+
+LRdat <- LRdat %>% select(1, 8:length(LRdat)) # remove anything that is a function of temp and hum (Webster durations, Hock durations and peaks)
+
+```
+
+```{r curate LR no scale dataset}
+
+# MA window to use - 1 day
+
+LRdat_noscale <- left_join(x = Burkard_LR, y = MA_noscale, by = c('Location', 'Date')) %>%
+  
+  # prepare SiteYear category to be used as a random effect in model
+  separate_wider_delim(SampleID, delim = '_', names = c('SiteYear', 'SampleNum')) %>%
+  
+  select(-c('FAMCq', 'FAMCq_sd', 'HEXCq', 'HEXCq_sd', 'Log_Quant', 'Year.y', 'Year.x', 'SampleNum', contains('Hock'), contains('Webster')))
+
+LRdat_noscale <- LRdat_noscale %>% select(1, 8:length(LRdat_noscale)) # remove anything that is a function of temp and hum (Webster durations, Hock durations and peaks)
+
+```
+
+### LOGISTIC REGRESSION
+
+Mixed effects logistic regression: 
+Background: https://stats.oarc.ucla.edu/other/mult-pkg/introduction-to-generalized-linear-mixed-models/
+Implementation:https://stats.oarc.ucla.edu/r/dae/mixed-effects-logistic-regression/
+
+What threshold to use? 
+What MA window to use?
+
+What should be extracted here? AIC, C statistic
+
+```{r LR - single var}
+
+library(lme4)
+
+# Run models and store outputs in a list
+
+model_list <- 
+  list(
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_temp_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_temp_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_temp_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_hum_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_hum_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_hum_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_WS_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_WS_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_WS_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_Pcp_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_Pcp + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_hum70 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_hum80 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_hum90 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA1_wetnight + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_temp_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_temp_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_temp_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_hum_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_hum_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_hum_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_WS_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_WS_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_WS_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_Pcp_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_Pcp + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_hum70 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_hum80 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_hum90 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA2_wetnight + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_temp_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_temp_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_temp_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_hum_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_hum_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_hum_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_WS_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_WS_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_WS_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_Pcp_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_Pcp + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_hum70 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_hum80 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_hum90 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA3_wetnight + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_temp_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_temp_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_temp_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_hum_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_hum_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_hum_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_WS_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_WS_min + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_WS_mean + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_Pcp_max + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_Pcp + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_hum70 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_hum80 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_hum90 + (1|SiteYear), family = binomial),
+  glmer(data = LRdat_noscale, thrs_0 ~ MA4_wetnight + (1|SiteYear), family = binomial)
+)
+
+print(model_list)
+
+# Extract summaries of each model
+summary_list <- lapply(model_list, summary)
+
+# Function to convert regression summary to data frame
+summary_to_df <- function(summary_obj) {
+  coefs <- summary_obj$coefficients
+  AIC <- summary_obj$AICtab
+  df <- data.frame(
+    term = rownames(coefs),
+    estimate = coefs[, "Estimate"],
+    std.error = coefs[, "Std. Error"],
+    statistic = coefs[, "z value"],
+    p.value = coefs[, "Pr(>|z|)"],
+    AIC = AIC[1]
+  )
+  return(df)
+}
+
+# Apply the function to each summary
+df_list <- lapply(summary_list, summary_to_df)
+
+# Print the data frames
+print(df_list)
+
+# Combine data frames into one
+combined_df <- do.call(rbind, df_list)
+
+# Add a model identifier
+combined_df$model <- rep(paste0("Model_", 1:length(df_list)), each = nrow(df_list[[1]]))
+combined_df <- combined_df %>% 
+  filter(!str_detect(term, 'Inter'))
+
+# Print the combined data frame
+print(combined_df)
+
+write.csv(combined_df, file = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/Single var LR.csv')
+
+```
+
+```{r LR multivariate models}
+
+# Generate baseline fixed-effect and mixed-effect  minimal models to see if 
+
+# baseline model fixed effect
+
+m0.glm = glm(thrs_0 ~ 1, family = binomial, data = LRdat) 
+
+# baseline model mixed effect
+
+m0.glmer = glmer(thrs_0 ~ (1|SiteYear), data = LRdat, family = binomial) 
+
+# report and compare AICs 
+
+aic.glmer <- AIC(logLik(m0.glmer))
+aic.glm <- AIC(logLik(m0.glm))
+paste('fixed effect AIC: ', aic.glm, 'mixed effect AIC: ', aic.glmer)
+
+```
+
+does the mixed-effects minimal baseline model explain significantly more variance by applying a model likelihood ratio test to the fixed- and the mixed-effects minimal base line model?
+
+```{r}
+
+# test random effects
+
+null.id = -2 * logLik(m0.glm) + 2 * logLik(m0.glmer)
+
+pchisq(as.numeric(null.id), df=1, lower.tail=F) 
+
+```
+
+ sig m0.glmer is better than m0.glm
+
+```{r}
+# save LRdat for HPCC uploadd
+write.csv(LRdat, file = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Code/HPCC/LRdat2.csv')
+
+write.csv(LRdat_noscale, file = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Code/HPCC/LRdat_noscale.csv')
+```
+
+```{r model-fitting TESTING CODE for HPCC}
+library(rJava)
+library(glmulti)
+
+# wrapper function for linear mixed-models
+
+glmer.glmulti <- function(formula,data, random="",...){
+  glmer(paste(deparse(formula),random), 
+        family = binomial, 
+        data=data, 
+        control=glmerControl(optimizer="bobyqa"), ...)
+}
+
+# define formula
+
+form_glmulti = as.formula(paste('thrs_0 ~ MA2_temp_max + MA2_hum_mean + MA1_Pcp_max'))
+
+# multi selection for glmer
+
+mfit <- glmulti(form_glmulti,random='+ (1 | SiteYear)', maxsize = 2,
+                data = LRdat, method = "h", fitfunc = glmer.glmulti,
+                crit = 'aic', intercept = TRUE, marginality = FALSE, level = 2)
+
+mfit
+```
+
+```{r Top 10 models}
+
+# Looking at all models
+
+loadout <- weightable(mfit)
+
+write.csv(loadout, file = '/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/Model loadout.csv')
+
+```
+
+```{r}
+
+# examine best model
+
+summary(mfit@objects[[1]])
+
+# variable performance plot and save
+
+par(mar=c(1,1,1,1))
+pdf(file = "/Users/jilliancheck/Library/CloudStorage/OneDrive-MichiganStateUniversity/Documents/Work/Spore Trapping/Manuscript/Figures/varimpt.pdf",   
+    # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+plot(mfit, type = 's')
+dev.off()
+```
+^ source: https://www.geeksforgeeks.org/how-to-convert-list-of-regression-outputs-into-data-frames-in-r/
+^ source: https://ladal.edu.au/regression.html#Mixed-Effects_Binomial_Logistic_Regression
+
+
+
