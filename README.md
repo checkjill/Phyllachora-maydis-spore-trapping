@@ -16,10 +16,8 @@ doi: <XXXX>
 ## Contents
 ### Data files:  
 **Molecular methods testing data:**  
-JCC 1-25-2024 DNA extraction testing.csv  
 HHICtest_final.csv
-Standard_curve.xlsx  
-Lysis testing summary.csv  
+Standard_curve.csv 
 
 **Weather data:**  
 Decatur 2021 - Hourly.csv  
