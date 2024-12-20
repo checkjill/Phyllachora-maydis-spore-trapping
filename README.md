@@ -16,7 +16,7 @@ doi: <XXXX>
 ## Contents
 ### Data files:  
 **Molecular methods testing data:**  
-HHICtest_final.csv
+HHIC_testing.csv  
 Standard_curve.csv 
 
 **Weather data:**  
