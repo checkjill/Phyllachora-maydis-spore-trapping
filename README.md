@@ -7,7 +7,7 @@ Institution: Michigan State University
 Email: checkjil@msu.edu  
 
 ## Publication information  
-Title:  
+Title: Unraveling the environmental drivers of Phyllachora maydis spore release using spore trapping and qPCR  
 Journal:  
 Authors: Check, J. C., Jacobs, J. L., Phillips, P. J., Roggenkamp, E. M., Willbur, J., Chilvers, M. I.  
 doi: <XXXX>  
